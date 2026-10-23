@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+
+# Production build
+dist/
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.production
+.env.*.local
+
+# Keep example environment file
+!.env.example
+
+# Firebase / production backups
+firebase-backups/
+
+# Temporary audit / cleanup reports
+mollick-firebase-audit-*.txt
+mollick-clear-all-report-*.txt
+mollick-*.txt
+
+# Development / patch scripts
+*.ps1
+*.mjs
+*.cjs
+
+# Backup / archive files
+*.bak
+*.backup
+*.zip
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
