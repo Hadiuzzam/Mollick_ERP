@@ -46,6 +46,7 @@ import { applyFullSaleReturn } from "./lib/returns";
 const LOCAL_KEY = "shohoj-erp-react-vite";
 const LANG_KEY = "shohoj-erp-language";
 const CURRENT_STAFF_KEY = "shohoj-erp-current-staff";
+const DEMO_SESSION_KEY = "shohoj-erp-demo-session";
 
 const languageText = {
   bn: {
@@ -322,7 +323,9 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authNotice, setAuthNotice] = useState("");
   const [showAuthPassword, setShowAuthPassword] = useState(false);
-  const [localDemoEntered, setLocalDemoEntered] = useState(false);
+  const [localDemoEntered, setLocalDemoEntered] = useState(
+    () => !isFirebaseReady() && sessionStorage.getItem(DEMO_SESSION_KEY) === "1",
+  );
   const [saleSaving, setSaleSaving] = useState(false);
   const [currentStaffId, setCurrentStaffId] = useState(
     () => localStorage.getItem(CURRENT_STAFF_KEY) || "",
@@ -2419,6 +2422,16 @@ export default function App() {
 
   async function submitAuth(event) {
     event.preventDefault();
+    const loginName = authEmail.trim().toLowerCase();
+    if (!authRegister && (loginName === "admin" || loginName === "admin@demo.local")) {
+      if (authPassword !== "123456") {
+        setAuthError(bt("ডেমো পাসওয়ার্ড ভুল", "Incorrect demo password"));
+        return;
+      }
+      sessionStorage.setItem(DEMO_SESSION_KEY, "1");
+      window.location.assign("?demo=1");
+      return;
+    }
     if (authRegister && authPassword !== authConfirmPassword) {
       setAuthError(bt("পাসওয়ার্ড দুটি এক নয়", "The passwords do not match"));
       return;
@@ -2454,7 +2467,13 @@ export default function App() {
     }
     setAuthError("");
     setAuthPassword("");
+    sessionStorage.setItem(DEMO_SESSION_KEY, "1");
     setLocalDemoEntered(true);
+  }
+
+  function exitDemo() {
+    sessionStorage.removeItem(DEMO_SESSION_KEY);
+    setLocalDemoEntered(false);
   }
 
   async function sendResetLink() {
@@ -2505,8 +2524,8 @@ export default function App() {
               {cloudLogin && authReady && (
                 <>
                   <form onSubmit={submitAuth}>
-                    <label>{bt("ইমেইল", "Email address")}
-                      <input type="email" autoComplete="email" placeholder="name@example.com" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} />
+                    <label>{authRegister ? bt("ইমেইল", "Email address") : bt("ইমেইল বা Admin ডেমো", "Email or Admin demo")}
+                      <input type={authRegister ? "email" : "text"} autoComplete="username" placeholder={authRegister ? "name@example.com" : "name@example.com / Admin"} required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} />
                     </label>
                     <label>{bt("পাসওয়ার্ড", "Password")}
                       <span className="erp-auth-password-field">
@@ -2623,7 +2642,7 @@ export default function App() {
           <div className="top-actions">
             <span className="sync-status" role="status">{cloudLabel(cloudStatus, lang)}</span>
             {isFirebaseReady() && <button className="ghost-button" type="button" onClick={() => signOutUser()}>{bt("লগআউট", "Sign out")}</button>}
-            {!isFirebaseReady() && <button className="ghost-button" type="button" onClick={() => setLocalDemoEntered(false)}>{bt("ডেমো থেকে বের হন", "Exit demo")}</button>}
+            {!isFirebaseReady() && <button className="ghost-button" type="button" onClick={exitDemo}>{bt("ডেমো থেকে বের হন", "Exit demo")}</button>}
             <button className="language-toggle" onClick={() => setLang(lang === "bn" ? "en" : "bn")} type="button">
               {t.languageButton}
             </button>
