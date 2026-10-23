@@ -1,73 +1,85 @@
 import { getApp, getApps, initializeApp } from "firebase/app";
 import {
-  get,
-  getDatabase,
-  onValue,
-  ref,
-  set,
-} from "firebase/database";
+  createUserWithEmailAndPassword,
+  getAuth,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signOut,
+} from "firebase/auth";
+import { getDatabase, onValue, ref, runTransaction, set } from "firebase/database";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAXLwJGm-5JkXFU44eGUi28Fm0o1ykWXzA",
-  authDomain: "brighthospital-46154.firebaseapp.com",
-  databaseURL:
-    "https://brighthospital-46154-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "brighthospital-46154",
-  storageBucket: "brighthospital-46154.firebasestorage.app",
-  messagingSenderId: "71552807441",
-  appId: "1:71552807441:web:32057930123e93b9a8b7b0",
-  measurementId: "G-TZEJJJ8XXG",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-// Keep Mollick ERP isolated from any other app/data in this Firebase project.
-const databasePath = "mollick_erp/main-store";
-
-let database;
+const requested = import.meta.env.VITE_FIREBASE_ENABLED === "true";
+const enabled = requested &&
+  Object.values(firebaseConfig).every(Boolean);
 
 function getFirebaseApp() {
   return getApps().length ? getApp() : initializeApp(firebaseConfig);
 }
 
-function getDb() {
-  if (!database) {
-    database = getDatabase(getFirebaseApp());
-  }
-
-  return database;
+function getStoreRef(userId) {
+  if (!userId) throw new Error("A signed-in account is required");
+  return ref(getDatabase(getFirebaseApp()), `organizations/${userId}/main-store`);
 }
 
 export function isFirebaseReady() {
-  return true;
+  return enabled;
 }
 
 export function getStoreMode() {
-  return "firebase";
+  return enabled ? "connecting" : requested ? "setup-error" : "local";
 }
 
-export function getStoreRef() {
-  return ref(getDb(), databasePath);
+export function subscribeAuth(callback, onError) {
+  return onAuthStateChanged(getAuth(getFirebaseApp()), callback, onError);
 }
 
-export async function loadFirebaseData() {
-  const snapshot = await get(getStoreRef());
-  return snapshot.exists() ? snapshot.val() : null;
+export function signIn(email, password) {
+  return signInWithEmailAndPassword(getAuth(getFirebaseApp()), email, password);
 }
 
-export async function saveFirebaseData(data) {
-  await set(getStoreRef(), {
-    ...data,
-    updatedAt: new Date().toISOString(),
-  });
+export function register(email, password) {
+  return createUserWithEmailAndPassword(getAuth(getFirebaseApp()), email, password);
 }
 
-export function subscribeFirebaseData(callback, onError) {
+export function signOutUser() {
+  return signOut(getAuth(getFirebaseApp()));
+}
+
+export function resetPassword(email) {
+  return sendPasswordResetEmail(getAuth(getFirebaseApp()), email);
+}
+
+export function subscribeFirebaseData(userId, callback, onError) {
   return onValue(
-    getStoreRef(),
-    (snapshot) => {
-      if (snapshot.exists()) {
-        callback(snapshot.val());
-      }
-    },
+    getStoreRef(userId),
+    (snapshot) => callback(snapshot.exists() ? snapshot.val() : null),
     onError,
   );
+}
+
+export async function mutateFirebaseData(userId, mutator) {
+  const result = await runTransaction(
+    getStoreRef(userId),
+    (current) => mutator(current),
+    { applyLocally: false },
+  );
+  if (!result.committed) {
+    const error = new Error("The data changed before this save");
+    error.code = "transaction/aborted";
+    throw error;
+  }
+  return result.snapshot.val();
+}
+
+export function replaceFirebaseData(userId, data) {
+  return set(getStoreRef(userId), data);
 }

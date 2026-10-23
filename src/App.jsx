@@ -1,15 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import html2canvas from "html2canvas";
-import { jsPDF } from "jspdf";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
   Boxes,
   ChevronDown,
   ChevronUp,
   Download,
+  Eye,
+  EyeOff,
   FileUp,
   Home,
   Pencil,
+  PackagePlus,
   Plus,
   ReceiptText,
   Save,
@@ -27,10 +28,20 @@ import {
 import {
   getStoreMode,
   isFirebaseReady,
-  loadFirebaseData,
-  saveFirebaseData,
+  mutateFirebaseData,
+  register,
+  resetPassword,
+  replaceFirebaseData,
+  signIn,
+  signOutUser,
+  subscribeAuth,
   subscribeFirebaseData,
 } from "./lib/firebaseStore";
+import { businessDateKey, businessMonthKey } from "./lib/businessDate";
+import { parseBackup } from "./lib/backup";
+import { paidAmount } from "./lib/saleMath";
+import { receivePurchase } from "./lib/inventory";
+import { applyFullSaleReturn } from "./lib/returns";
 
 const LOCAL_KEY = "shohoj-erp-react-vite";
 const LANG_KEY = "shohoj-erp-language";
@@ -46,7 +57,8 @@ const languageText = {
     courier: "কুরিয়ার কন্ডিশন",
     productInsights: "পণ্য চাহিদা",
     customerInsights: "ক্রেতা বিশ্লেষণ",
-    products: "পণ্য",
+    products: "পণ্য/সেবা",
+    purchases: "ক্রয়",
     stock: "স্টক",
     dues: "বাকি",
     reports: "রিপোর্ট",
@@ -75,7 +87,8 @@ const languageText = {
     courier: "Courier COD",
     productInsights: "Product Demand",
     customerInsights: "Customer Insights",
-    products: "Products",
+    products: "Products & Services",
+    purchases: "Purchases",
     stock: "Stock",
     dues: "Due",
     reports: "Reports",
@@ -102,19 +115,19 @@ function uid(prefix) {
 }
 
 function todayKey(date = new Date()) {
-  return date.toISOString().slice(0, 10);
+  return businessDateKey(date);
 }
 
 function monthKey(date = new Date()) {
-  return date.toISOString().slice(0, 7);
+  return businessMonthKey(date);
 }
 
 function getDateKey(iso) {
-  return new Date(iso).toISOString().slice(0, 10);
+  return businessDateKey(iso);
 }
 
 function getMonthKey(iso) {
-  return new Date(iso).toISOString().slice(0, 7);
+  return businessMonthKey(iso);
 }
 
 function wholeTaka(value) {
@@ -131,9 +144,13 @@ function money(value) {
 function getProductionInitialData() {
   return {
     products: [],
+    purchases: [],
+    returns: [],
     sales: [],
     expenses: [],
     staff: [],
+    stockMovements: [],
+    duePayments: [],
     shop: { name: "", phone: "", address: "" },
   };
 }
@@ -157,11 +174,16 @@ function normalizeData(data) {
       ? data.products.map((product) => ({
           ...product,
           active: product?.active !== false,
+          kind: product?.kind === "service" ? "service" : "product",
         }))
       : [],
+    purchases: Array.isArray(data?.purchases) ? data.purchases : [],
+    returns: Array.isArray(data?.returns) ? data.returns : [],
     sales: Array.isArray(data?.sales) ? data.sales : [],
     expenses: Array.isArray(data?.expenses) ? data.expenses : [],
     staff: Array.isArray(data?.staff) ? data.staff : [],
+    stockMovements: Array.isArray(data?.stockMovements) ? data.stockMovements : [],
+    duePayments: Array.isArray(data?.duePayments) ? data.duePayments : [],
     shop: data?.shop || { name: "", phone: "", address: "" },
   };
 }
@@ -218,6 +240,19 @@ function conditionStatusLabel(status, lang = "bn") {
   return labels[status]?.[lang === "bn" ? "bn" : "en"] || status || "—";
 }
 
+function stockReasonLabel(reason, lang = "bn") {
+  const labels = {
+    opening_stock: ["শুরুর স্টক", "Opening stock"],
+    product_edit: ["পণ্য সংশোধন", "Product edit"],
+    adjustment: ["স্টক সমন্বয়", "Stock adjustment"],
+    sale: ["বিক্রয়", "Sale"],
+    purchase: ["ক্রয়", "Purchase"],
+    sale_return: ["বিক্রয় ফেরত", "Sale return"],
+    courier_return: ["কুরিয়ার ফেরত", "Courier return"],
+  };
+  return labels[reason]?.[lang === "bn" ? 0 : 1] || reason;
+}
+
 function saleProfit(sale) {
   if (!isRevenueRecognizedSale(sale)) return 0;
 
@@ -243,13 +278,16 @@ const tabs = [
   { id: "courier", label: "কুরিয়ার কন্ডিশন", icon: Truck },
   { id: "productInsights", label: "পণ্য চাহিদা", icon: BarChart3 },
   { id: "customerInsights", label: "ক্রেতা বিশ্লেষণ", icon: UserRound },
-  { id: "products", label: "পণ্য", icon: Boxes },
+  { id: "products", label: "পণ্য/সেবা", icon: Boxes },
+  { id: "purchases", label: "ক্রয়", icon: PackagePlus },
   { id: "stock", label: "স্টক", icon: Warehouse },
   { id: "dues", label: "বাকি", icon: WalletCards },
   { id: "reports", label: "রিপোর্ট", icon: BarChart3 },
   { id: "staff", label: "স্টাফ", icon: Users },
   { id: "settings", label: "সেটিংস", icon: Settings },
 ];
+
+const primaryTabs = new Set(["dashboard", "sale", "allSales", "products", "purchases", "stock", "dues", "settings"]);
 
 const titles = {
   dashboard: "ড্যাশবোর্ড",
@@ -258,7 +296,8 @@ const titles = {
   courier: "কুরিয়ার কন্ডিশন",
   productInsights: "পণ্য চাহিদা",
   customerInsights: "ক্রেতা বিশ্লেষণ",
-  products: "পণ্য ও স্টক",
+  products: "পণ্য ও সেবা",
+  purchases: "পণ্য ক্রয়",
   stock: "স্টক কন্ট্রোল",
   dues: "বাকি হিসাব",
   reports: "লাভ ও রিপোর্ট",
@@ -270,11 +309,26 @@ export default function App() {
   const [lang, setLang] = useState(() => localStorage.getItem(LANG_KEY) || "bn");
   const t = languageText[lang];
   const bt = (bn, en) => (lang === "bn" ? bn : en);
-  const [data, setData] = useState(() => loadLocalData());
+  const [data, setData] = useState(() =>
+    isFirebaseReady() ? getProductionInitialData() : loadLocalData(),
+  );
+  const [authUser, setAuthUser] = useState(null);
+  const [authReady, setAuthReady] = useState(!isFirebaseReady());
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authConfirmPassword, setAuthConfirmPassword] = useState("");
+  const [authRegister, setAuthRegister] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authNotice, setAuthNotice] = useState("");
+  const [showAuthPassword, setShowAuthPassword] = useState(false);
+  const [localDemoEntered, setLocalDemoEntered] = useState(false);
+  const [saleSaving, setSaleSaving] = useState(false);
   const [currentStaffId, setCurrentStaffId] = useState(
     () => localStorage.getItem(CURRENT_STAFF_KEY) || "",
   );
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [showMoreNav, setShowMoreNav] = useState(false);
   const [toast, setToast] = useState("");
   const [search, setSearch] = useState("");
   const [stockSearch, setStockSearch] = useState("");
@@ -285,6 +339,7 @@ export default function App() {
   const [conditionSearch, setConditionSearch] = useState("");
   const [insightFilter, setInsightFilter] = useState("all");
   const [cloudStatus, setCloudStatus] = useState(getStoreMode());
+  const [syncRetry, setSyncRetry] = useState(0);
   const [productForm, setProductForm] = useState(emptyProductForm);
   const [productDeleteConfirm, setProductDeleteConfirm] = useState({
     open: false,
@@ -303,12 +358,20 @@ export default function App() {
     staffRole: "",
   });
   const [expenseForm, setExpenseForm] = useState({ type: "", amount: "", note: "" });
+  const [purchaseForm, setPurchaseForm] = useState({ productId: "", supplier: "", qty: "", unitCost: "", note: "" });
+  const [purchaseSaving, setPurchaseSaving] = useState(false);
   const [shopForm, setShopForm] = useState(data.shop);
-  const didLoadCloud = useRef(false);
-  const lastSavedJson = useRef("");
+  const [dueDialog, setDueDialog] = useState({ saleId: "", amount: "" });
+  const [dueSaving, setDueSaving] = useState(false);
+  const [returnDialog, setReturnDialog] = useState({ saleId: "", reason: "" });
+  const [returnSaving, setReturnSaving] = useState(false);
 
   const products = data.products;
   const sales = data.sales;
+  const returns = data.returns;
+  const returnDialogSale = sales.find((sale) => sale.id === returnDialog.saleId);
+  const dueDialogSale = sales.find((sale) => sale.id === dueDialog.saleId);
+  const dueDialogRemaining = Math.max(0, Number(dueDialogSale?.total || 0) - Number(dueDialogSale?.paid || 0));
   const expenses = data.expenses;
   const staff = data.staff;
   const activeStaff = staff.filter((member) => member.active !== false);
@@ -335,66 +398,36 @@ export default function App() {
   }, [data.shop]);
 
   useEffect(() => {
-    let stopped = false;
-
-    async function loadCloud() {
-      if (!isFirebaseReady()) {
-        setCloudStatus("local");
-        didLoadCloud.current = true;
-        return;
-      }
-
-      try {
-        setCloudStatus("connecting");
-        const cloudData = await loadFirebaseData();
-        if (!stopped && cloudData) {
-          setData(normalizeData(cloudData));
-        }
-        if (!stopped && !cloudData) {
-          const cleanData = getProductionInitialData();
-          setData(cleanData);
-          await saveFirebaseData(cleanData);
-        }
-        if (!stopped) {
-          setCloudStatus("firebase");
-          didLoadCloud.current = true;
-        }
-      } catch {
-        if (!stopped) {
-          setCloudStatus("local");
-          didLoadCloud.current = true;
-          showToast("Firebase সংযোগ পাওয়া যায়নি, local cache চলছে");
-        }
-      }
-    }
-
-    loadCloud();
-    return () => {
-      stopped = true;
-    };
-  }, []);
-
-  useEffect(() => {
     if (!isFirebaseReady()) return undefined;
-    return subscribeFirebaseData(
-      (cloudData) => {
-        const json = JSON.stringify(normalizeData(cloudData));
-        if (json !== lastSavedJson.current) setData(JSON.parse(json));
+    return subscribeAuth(
+      (user) => {
+        setAuthUser(user);
+        setAuthReady(true);
+        setData(getProductionInitialData());
+        setCloudStatus(user ? "connecting" : "local");
       },
-      () => setCloudStatus("local"),
+      () => {
+        setAuthReady(true);
+        setCloudStatus("error");
+      },
     );
   }, []);
 
   useEffect(() => {
-    const normalized = normalizeData(data);
-    const json = JSON.stringify(normalized);
-    localStorage.setItem(LOCAL_KEY, json);
-    lastSavedJson.current = json;
+    if (!isFirebaseReady() || !authUser) return undefined;
+    return subscribeFirebaseData(
+      authUser.uid,
+      (cloudData) => {
+        setData(normalizeData(cloudData));
+        setCloudStatus("firebase");
+      },
+      () => setCloudStatus("error"),
+    );
+  }, [authUser?.uid, syncRetry]);
 
-    if (didLoadCloud.current && isFirebaseReady()) {
-      saveFirebaseData(normalized)
-        .then(() => setCloudStatus("firebase"))
-        .catch(() => setCloudStatus("local"));
+  useEffect(() => {
+    if (!isFirebaseReady()) {
+      localStorage.setItem(LOCAL_KEY, JSON.stringify(normalizeData(data)));
     }
   }, [data]);
 
@@ -420,17 +453,46 @@ export default function App() {
     setToast(message);
   }
 
-  function patchData(mutator) {
-    setData((current) => {
-      const draft = {
-        products: [...current.products],
-        sales: [...current.sales],
-        expenses: [...current.expenses],
-        staff: [...current.staff],
-        shop: { ...current.shop },
-      };
-      mutator(draft);
+  async function patchData(mutator) {
+    const update = (current) => {
+      const draft = structuredClone(normalizeData(current));
+      if (mutator(draft) === false) return undefined;
       return draft;
+    };
+    if (isFirebaseReady()) {
+      if (!authUser || cloudStatus !== "firebase") {
+        showToast(bt("সংযোগ তৈরি হলে আবার চেষ্টা করুন", "Try again after connecting"));
+        return false;
+      }
+      try {
+        await mutateFirebaseData(authUser.uid, update);
+        return true;
+      } catch (error) {
+        if (error?.code === "transaction/aborted") {
+          showToast(bt("তথ্য বদলেছে; নতুন হিসাব দেখে আবার চেষ্টা করুন", "Data changed; review and retry"));
+          return false;
+        }
+        setCloudStatus("error");
+        showToast(bt("ডেটা সেভ হয়নি; আবার চেষ্টা করুন", "Save failed; please retry"));
+        return false;
+      }
+    } else {
+      setData((current) => update(current) || current);
+      return true;
+    }
+  }
+
+  function recordStockMovement(draft, product, delta, reason, saleId = "") {
+    if (!delta) return;
+    draft.stockMovements.push({
+      id: uid("stock"),
+      date: new Date().toISOString(),
+      productId: product.id,
+      productName: product.name,
+      delta,
+      reason,
+      saleId,
+      staffName: currentStaff?.name || "",
     });
   }
 
@@ -447,20 +509,22 @@ export default function App() {
         getMonthKey(getRevenueDate(sale)) === month &&
         isRevenueRecognizedSale(sale),
     );
+    const todaysReturns = returns.filter((item) => getDateKey(item.date) === today);
+    const monthlyReturns = returns.filter((item) => getMonthKey(item.date) === month);
     const dailyExpense = expenses
       .filter((expense) => getDateKey(expense.date) === today)
       .reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
     const monthlyExpense = expenses
       .filter((expense) => getMonthKey(expense.date) === month)
       .reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
-    const dailyProfit = todaysSales.reduce((sum, sale) => sum + saleProfit(sale), 0) - dailyExpense;
-    const monthlyProfit = monthlySales.reduce((sum, sale) => sum + saleProfit(sale), 0) - monthlyExpense;
+    const dailyProfit = todaysSales.reduce((sum, sale) => sum + saleProfit(sale), 0) - todaysReturns.reduce((sum, item) => sum + Number(item.profitReversed || 0), 0) - dailyExpense;
+    const monthlyProfit = monthlySales.reduce((sum, sale) => sum + saleProfit(sale), 0) - monthlyReturns.reduce((sum, item) => sum + Number(item.profitReversed || 0), 0) - monthlyExpense;
 
     return {
-      todaySales: todaysSales.reduce((sum, sale) => sum + sale.total, 0),
+      todaySales: todaysSales.reduce((sum, sale) => sum + Number(sale.total || 0), 0) - todaysReturns.reduce((sum, item) => sum + Number(item.total || 0), 0),
       todayProfit: dailyProfit,
       totalDue: sales
-        .filter((sale) => !isConditionSale(sale))
+        .filter((sale) => !isConditionSale(sale) && !sale.returnedAt)
         .reduce(
           (sum, sale) =>
             sum +
@@ -481,13 +545,16 @@ export default function App() {
         (sum, product) => sum + Number(product.buyPrice || 0) * Number(product.stock || 0),
         0,
       ),
-      monthSales: monthlySales.reduce((sum, sale) => sum + sale.total, 0),
+      monthSales: monthlySales.reduce((sum, sale) => sum + Number(sale.total || 0), 0) - monthlyReturns.reduce((sum, item) => sum + Number(item.total || 0), 0),
       monthProfit: monthlyProfit,
       monthExpense: monthlyExpense,
     };
-  }, [expenses, products, sales]);
+  }, [expenses, products, returns, sales]);
 
-  const lowStock = products.filter((product) => Number(product.stock) <= Number(product.lowStock || 0));
+  const lowStock = products.filter((product) =>
+    product.active !== false && product.kind !== "service" &&
+    Number(product.stock) <= Number(product.lowStock || 0),
+  );
   const productCategories = [...new Set(
     products
       .map((product) => String(product.category || "").trim())
@@ -506,12 +573,14 @@ export default function App() {
     return matchesSearch && matchesCategory;
   });
   const filteredStock = products.filter((product) =>
+    product.kind !== "service" &&
     `${product.name} ${product.category}`.toLowerCase().includes(stockSearch.toLowerCase()),
   );
   const recentSales = [...sales].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 8);
   const dueSales = sales.filter(
     (sale) =>
       !isConditionSale(sale) &&
+      !sale.returnedAt &&
       Number(sale.total || 0) - Number(sale.paid || 0) > 0.001,
   );
   const reportSales = sales
@@ -525,6 +594,10 @@ export default function App() {
       }
       return true;
     })
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+  const reportReturns = returns
+    .filter((item) => reportFilter === "all" ||
+      (reportFilter === "today" ? getDateKey(item.date) === todayKey() : getMonthKey(item.date) === monthKey()))
     .sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const allSalesRows = [...sales]
@@ -542,7 +615,7 @@ export default function App() {
         allSalesStatus === "paid" &&
         !(
           (conditionSale && conditionStatus === "settled") ||
-          (!conditionSale && due <= 0)
+          (!conditionSale && !sale.returnedAt && due <= 0)
         )
       ) {
         return false;
@@ -550,7 +623,7 @@ export default function App() {
 
       if (
         allSalesStatus === "due" &&
-        (conditionSale || due <= 0)
+        (conditionSale || sale.returnedAt || due <= 0)
       ) {
         return false;
       }
@@ -558,6 +631,7 @@ export default function App() {
       if (allSalesStatus === "condition" && !conditionSale) {
         return false;
       }
+      if (allSalesStatus === "returned" && !sale.returnedAt && conditionStatus !== "returned") return false;
 
       const productNames = Array.isArray(sale.items)
         ? sale.items.map((item) => item.name || "").join(" ")
@@ -573,6 +647,7 @@ export default function App() {
         sale?.condition?.courierName || "",
         sale?.condition?.trackingNo || "",
         conditionStatusLabel(conditionStatus, lang),
+        sale.returnedAt ? bt("ফেরত", "returned") : "",
         productNames,
       ]
         .join(" ")
@@ -587,12 +662,12 @@ export default function App() {
       const total = Number(sale.total || 0);
       const paid = Math.min(Number(sale.paid || 0), total);
 
-      if (isRevenueRecognizedSale(sale)) {
+      if (isRevenueRecognizedSale(sale) && !sale.returnedAt) {
         summary.total += total;
         summary.paid += paid;
       }
 
-      if (!isConditionSale(sale)) {
+      if (!isConditionSale(sale) && !sale.returnedAt) {
         summary.due += Math.max(0, total - paid);
       }
 
@@ -823,11 +898,7 @@ export default function App() {
     0,
   );
   const isConditionDraft = saleForm.payment === "Courier Condition";
-  const salePaid = isConditionDraft
-    ? 0
-    : saleForm.paid === ""
-      ? saleCartTotal
-      : Math.min(wholeTaka(saleForm.paid), saleCartTotal);
+  const salePaid = paidAmount(saleCartTotal, saleForm.paid, saleForm.payment);
 
   function openNewProductModal() {
     setProductForm(emptyProductForm);
@@ -839,7 +910,7 @@ export default function App() {
     setProductForm(emptyProductForm);
   }
 
-  function submitProduct(event) {
+  async function submitProduct(event) {
     event.preventDefault();
 
     const existingProduct = productForm.id
@@ -849,11 +920,12 @@ export default function App() {
     const product = {
       id: productForm.id || uid("product"),
       name: productForm.name.trim(),
+      kind: productForm.kind === "service" ? "service" : "product",
       category: productForm.category.trim(),
-      buyPrice: wholeTaka(productForm.buyPrice),
+      buyPrice: productForm.kind === "service" ? 0 : wholeTaka(productForm.buyPrice),
       sellPrice: wholeTaka(productForm.sellPrice),
-      stock: wholeTaka(productForm.stock),
-      lowStock: wholeTaka(productForm.lowStock),
+      stock: productForm.kind === "service" ? 0 : wholeTaka(productForm.stock),
+      lowStock: productForm.kind === "service" ? 0 : wholeTaka(productForm.lowStock),
       active: productForm.active !== false,
       addedByStaffId: existingProduct
         ? existingProduct.addedByStaffId || ""
@@ -863,26 +935,37 @@ export default function App() {
         : currentStaff?.name || "",
     };
 
-    if (!product.name || product.sellPrice <= 0) {
-      showToast("পণ্যের নাম ও বিক্রয় মূল্য দিন");
+    if (!product.name || product.sellPrice <= 0 ||
+        (product.kind === "product" && [product.buyPrice, product.stock, product.lowStock].some((value) => value < 0))) {
+      showToast(bt("সঠিক নাম, মূল্য ও স্টক দিন", "Enter valid name, prices, and stock"));
       return;
     }
 
-    patchData((draft) => {
+    const saved = await patchData((draft) => {
       const index = draft.products.findIndex((item) => item.id === product.id);
+      const previousStock = index >= 0 ? wholeTaka(draft.products[index].stock) : 0;
       if (index >= 0) draft.products[index] = product;
       else draft.products.push(product);
+      recordStockMovement(
+        draft,
+        product,
+        product.stock - previousStock,
+        index >= 0 ? "product_edit" : "opening_stock",
+      );
     });
 
-    setProductModalOpen(false);
-    setProductForm(emptyProductForm);
-    showToast(productForm.id ? "পণ্য আপডেট হয়েছে" : "পণ্য সেভ হয়েছে");
+    if (saved) {
+      setProductModalOpen(false);
+      setProductForm(emptyProductForm);
+      showToast(productForm.id ? "পণ্য আপডেট হয়েছে" : "পণ্য সেভ হয়েছে");
+    }
   }
 
   function editProduct(product) {
     setProductForm({
       id: product.id,
       name: product.name,
+      kind: product.kind || "product",
       category: product.category || "",
       buyPrice: product.buyPrice === "" ? "" : String(wholeTaka(product.buyPrice)),
       sellPrice: product.sellPrice === "" ? "" : String(wholeTaka(product.sellPrice)),
@@ -911,36 +994,73 @@ export default function App() {
     });
   }
 
-  function confirmDeleteProduct() {
+  async function confirmDeleteProduct() {
     const productId = productDeleteConfirm.productId;
     if (!productId) return;
 
-    patchData((draft) => {
-      draft.products = draft.products.filter(
-        (product) => product.id !== productId,
-      );
+    const saved = await patchData((draft) => {
+      const hasHistory = draft.sales.some((sale) => sale.items?.some((item) => item.productId === productId)) ||
+        draft.purchases.some((purchase) => purchase.productId === productId);
+      if (hasHistory) {
+        draft.products = draft.products.map((product) => product.id === productId ? { ...product, active: false } : product);
+      } else {
+        draft.products = draft.products.filter((product) => product.id !== productId);
+      }
     });
 
-    closeProductDeleteConfirm();
-    showToast(bt("পণ্য ডিলিট হয়েছে", "Product deleted"));
+    if (saved) {
+      closeProductDeleteConfirm();
+      showToast(bt("পণ্য সরানো হয়েছে", "Product removed"));
+    }
   }
 
   function adjustStock(productId, delta) {
-    /* STOCK SINGLE-STEP IMMUTABLE FIX */
-    setData((current) => ({
-      ...current,
-      products: current.products.map((product) =>
-        product.id === productId
-          ? {
-              ...product,
-              stock: Math.max(
-                0,
-                Math.round(Number(product.stock || 0)) + delta,
-              ),
-            }
-          : product,
-      ),
-    }));
+    patchData((draft) => {
+      const product = draft.products.find((item) => item.id === productId);
+      if (!product) return;
+      const previousStock = wholeTaka(product.stock);
+      product.stock = Math.max(0, previousStock + delta);
+      recordStockMovement(draft, product, product.stock - previousStock, "adjustment");
+    });
+  }
+
+  async function submitPurchase(event) {
+    event.preventDefault();
+    if (purchaseSaving) return;
+    const product = products.find((item) => item.id === purchaseForm.productId);
+    const quantity = wholeTaka(purchaseForm.qty);
+    const unitCost = wholeTaka(purchaseForm.unitCost);
+    if (!product || product.kind === "service" || quantity <= 0 || unitCost <= 0 ||
+        !Number.isFinite(Number(purchaseForm.qty)) || !Number.isFinite(Number(purchaseForm.unitCost))) {
+      showToast(bt("পণ্য, পরিমাণ ও ক্রয় মূল্য ঠিক করুন", "Check the product, quantity, and buying price"));
+      return;
+    }
+    const purchaseId = uid("purchase");
+    setPurchaseSaving(true);
+    const saved = await patchData((draft) => {
+      const index = draft.products.findIndex((item) => item.id === product.id && item.kind !== "service");
+      if (index < 0) return false;
+      const current = draft.products[index];
+      draft.products[index] = receivePurchase(current, quantity, unitCost);
+      recordStockMovement(draft, current, quantity, "purchase");
+      draft.purchases.push({
+        id: purchaseId,
+        date: new Date().toISOString(),
+        productId: current.id,
+        productName: current.name,
+        supplier: purchaseForm.supplier.trim(),
+        qty: quantity,
+        unitCost,
+        total: quantity * unitCost,
+        note: purchaseForm.note.trim(),
+        staffName: currentStaff?.name || "",
+      });
+    });
+    setPurchaseSaving(false);
+    if (saved) {
+      setPurchaseForm({ productId: "", supplier: "", qty: "", unitCost: "", note: "" });
+      showToast(bt("ক্রয় ও স্টক সেভ হয়েছে", "Purchase and stock saved"));
+    }
   }
 
   function addSaleItem() {
@@ -974,7 +1094,7 @@ export default function App() {
       (item) => item.productId === product.id,
     );
     const nextQty = wholeTaka(currentLine?.qty) + qty;
-    const availableStock = wholeTaka(product.stock);
+    const availableStock = product.kind === "service" ? Infinity : wholeTaka(product.stock);
 
     if (nextQty > availableStock) {
       showToast(
@@ -994,6 +1114,7 @@ export default function App() {
       const nextItem = {
         productId: product.id,
         name: product.name,
+        kind: product.kind || "product",
         qty: nextQty,
         price,
         buyPrice: wholeTaka(product.buyPrice),
@@ -1030,7 +1151,7 @@ export default function App() {
     const product = products.find(
       (item) => item.id === productId,
     );
-    const availableStock = wholeTaka(product?.stock);
+    const availableStock = product?.kind === "service" ? Infinity : wholeTaka(product?.stock);
     const nextQty = wholeTaka(line.qty) + delta;
 
     if (nextQty < 1) return;
@@ -1068,8 +1189,9 @@ export default function App() {
     });
   }
 
-  function submitSale(event) {
+  async function submitSale(event) {
     event.preventDefault();
+    if (saleSaving) return;
 
     const staffMember = currentStaff || activeStaff[0];
     const isCondition = saleForm.payment === "Courier Condition";
@@ -1104,7 +1226,7 @@ export default function App() {
         product.active === false ||
         wholeTaka(line.qty) <= 0 ||
         wholeTaka(line.price) < 0 ||
-        wholeTaka(product.stock) < wholeTaka(line.qty)
+        (product.kind !== "service" && wholeTaka(product.stock) < wholeTaka(line.qty))
       );
     });
 
@@ -1130,6 +1252,7 @@ export default function App() {
     const items = saleItems.map((item) => ({
       productId: item.productId,
       name: item.name,
+      kind: item.kind || "product",
       qty: wholeTaka(item.qty),
       price: wholeTaka(item.price),
       buyPrice: wholeTaka(item.buyPrice),
@@ -1139,20 +1262,34 @@ export default function App() {
       (sum, item) => sum + item.qty * item.price,
       0,
     );
-    const paid = isCondition
-      ? 0
-      : saleForm.paid === ""
-        ? total
-        : Math.min(wholeTaka(saleForm.paid), total);
+    if (!isCondition && saleForm.paid !== "" &&
+        (!Number.isFinite(Number(saleForm.paid)) || Number(saleForm.paid) < 0 || Number(saleForm.paid) > total)) {
+      showToast(bt("পরিশোধের টাকা বিলের মধ্যে দিন", "Paid amount must be within the bill total"));
+      return;
+    }
+    const paid = paidAmount(total, saleForm.paid, saleForm.payment);
+    const saleId = uid("sale");
 
-    patchData((draft) => {
+    setSaleSaving(true);
+    const saved = await patchData((draft) => {
+      if (items.some((item) => {
+        const product = draft.products.find((entry) => entry.id === item.productId);
+        return !product || product.active === false ||
+          (product.kind !== "service" && wholeTaka(product.stock) < item.qty);
+      })) return false;
+      const committedItems = items.map((item) => ({
+        ...item,
+        buyPrice: wholeTaka(draft.products.find((product) => product.id === item.productId)?.buyPrice),
+      }));
       const soldQtyByProduct = new Map(
         items.map((item) => [item.productId, item.qty]),
       );
 
       draft.products = draft.products.map((product) => {
         const soldQty = soldQtyByProduct.get(product.id);
-        if (!soldQty) return product;
+        if (!soldQty || product.kind === "service") return product;
+
+        recordStockMovement(draft, product, -soldQty, "sale", saleId);
 
         return {
           ...product,
@@ -1164,7 +1301,7 @@ export default function App() {
       });
 
       draft.sales.push({
-        id: uid("sale"),
+        id: saleId,
         orderNo: `T${Date.now().toString().slice(-10)}`,
         date: new Date().toISOString(),
         customer: saleForm.customer.trim(),
@@ -1190,22 +1327,20 @@ export default function App() {
           : null,
         staffId: staffMember?.id || "",
         staffName: staffMember?.name || "",
-        items,
+        items: committedItems,
         total,
         paid,
       });
     });
 
-    resetSaleDraft();
-    showToast(
-      bt(
-        "একাধিক পণ্যের বিক্রয় সেভ হয়েছে",
-        "Sale saved successfully",
-      ),
-    );
+    setSaleSaving(false);
+    if (saved) {
+      resetSaleDraft();
+      showToast(bt("বিক্রয় সেভ হয়েছে", "Sale saved successfully"));
+    }
   }
 
-  function updateConditionStatus(saleId, nextStatus) {
+  async function updateConditionStatus(saleId, nextStatus) {
     const sale = sales.find((item) => item.id === saleId);
 
     if (!sale || !isConditionSale(sale)) return;
@@ -1224,7 +1359,7 @@ export default function App() {
 
     const now = new Date().toISOString();
 
-    patchData((draft) => {
+    const saved = await patchData((draft) => {
       const conditionSale = draft.sales.find(
         (item) => item.id === saleId,
       );
@@ -1252,6 +1387,7 @@ export default function App() {
           draft.products = draft.products.map((product) => {
             const returnedQty = returnedQtyByProduct.get(product.id);
             if (!returnedQty) return product;
+            recordStockMovement(draft, product, returnedQty, "courier_return", saleId);
 
             return {
               ...product,
@@ -1316,19 +1452,16 @@ export default function App() {
       ),
     };
 
-    showToast(
-      messages[nextStatus] ||
-        bt("স্ট্যাটাস আপডেট হয়েছে", "Status updated"),
-    );
+    if (saved) showToast(messages[nextStatus] || bt("স্ট্যাটাস আপডেট হয়েছে", "Status updated"));
   }
 
-  function submitStaff(event) {
+  async function submitStaff(event) {
     event.preventDefault();
     if (!staffForm.name.trim()) {
       showToast(t.enterStaff);
       return;
     }
-    patchData((draft) => {
+    const saved = await patchData((draft) => {
       draft.staff.push({
         id: uid("staff"),
         name: staffForm.name.trim(),
@@ -1336,8 +1469,10 @@ export default function App() {
         active: true,
       });
     });
-    setStaffForm({ name: "", role: "Cashier" });
-    showToast(t.staffSaved);
+    if (saved) {
+      setStaffForm({ name: "", role: "Cashier" });
+      showToast(t.staffSaved);
+    }
   }
 
   function removeStaff(staffId) {
@@ -1360,27 +1495,29 @@ export default function App() {
     });
   }
 
-  function confirmDeleteStaff() {
+  async function confirmDeleteStaff() {
     const staffId = staffDeleteConfirm.staffId;
     if (!staffId) return;
 
-    patchData((draft) => {
+    const saved = await patchData((draft) => {
       draft.staff = draft.staff.map((member) =>
         member.id === staffId ? { ...member, active: false } : member,
       );
     });
 
-    closeStaffDeleteConfirm();
-    showToast(bt("স্টাফ সরানো হয়েছে", "Staff member removed"));
+    if (saved) {
+      closeStaffDeleteConfirm();
+      showToast(bt("স্টাফ সরানো হয়েছে", "Staff member removed"));
+    }
   }
 
-  function submitExpense(event) {
+  async function submitExpense(event) {
     event.preventDefault();
     if (!expenseForm.type || wholeTaka(expenseForm.amount) <= 0) {
       showToast("খরচের ধরন ও টাকা দিন");
       return;
     }
-    patchData((draft) => {
+    const saved = await patchData((draft) => {
       draft.expenses.push({
         id: uid("expense"),
         date: new Date().toISOString(),
@@ -1389,44 +1526,97 @@ export default function App() {
         note: expenseForm.note.trim(),
       });
     });
-    setExpenseForm({ type: "", amount: "", note: "" });
-    showToast("খরচ সেভ হয়েছে");
+    if (saved) {
+      setExpenseForm({ type: "", amount: "", note: "" });
+      showToast("খরচ সেভ হয়েছে");
+    }
   }
 
   function payDue(saleId) {
     const sale = sales.find((item) => item.id === saleId);
     if (!sale) return;
-    const due = sale.total - sale.paid;
-    const amount = wholeTaka(
-      window.prompt(
-        `বাকি ${money(due)}। কত টাকা পরিশোধ?`,
-        String(wholeTaka(due)),
-      ),
-    );
-    if (amount <= 0) return;
-    patchData((draft) => {
+    setDueDialog({ saleId, amount: String(wholeTaka(sale.total - sale.paid)) });
+  }
+
+  async function submitDuePayment(event) {
+    event.preventDefault();
+    if (dueSaving) return;
+    const saleId = dueDialog.saleId;
+    const amount = wholeTaka(dueDialog.amount);
+    const sale = sales.find((item) => item.id === saleId);
+    const due = sale ? Math.max(0, wholeTaka(sale.total) - wholeTaka(sale.paid)) : 0;
+    if (!sale || sale.returnedAt || amount <= 0 || amount > due) {
+      showToast(bt("বাকির মধ্যে সঠিক টাকা দিন", "Enter an amount within the remaining due"));
+      return;
+    }
+    setDueSaving(true);
+    const saved = await patchData((draft) => {
       const dueSale = draft.sales.find((item) => item.id === saleId);
-      dueSale.paid = Math.min(dueSale.total, dueSale.paid + amount);
+      if (!dueSale || dueSale.returnedAt) return false;
+      const currentDue = Math.max(0, Number(dueSale.total || 0) - Number(dueSale.paid || 0));
+      if (amount > currentDue) return false;
+      const collected = amount;
+      dueSale.paid = Number(dueSale.paid || 0) + collected;
+      draft.duePayments.push({
+        id: uid("due"),
+        saleId,
+        date: new Date().toISOString(),
+        amount: collected,
+        staffName: currentStaff?.name || "",
+      });
     });
-    showToast("বাকি আপডেট হয়েছে");
+    setDueSaving(false);
+    if (saved) {
+      setDueDialog({ saleId: "", amount: "" });
+      showToast(bt("বাকি পরিশোধ সেভ হয়েছে", "Due payment saved"));
+    }
+  }
+
+  async function submitSaleReturn(event) {
+    event.preventDefault();
+    if (returnSaving) return;
+    const reason = returnDialog.reason.trim();
+    if (!reason) {
+      showToast(bt("ফেরতের কারণ লিখুন", "Enter a reason for the return"));
+      return;
+    }
+    const saleId = returnDialog.saleId;
+    const details = {
+      id: uid("return"),
+      date: new Date().toISOString(),
+      reason,
+      staffName: currentStaff?.name || "",
+    };
+    setReturnSaving(true);
+    const saved = await patchData((draft) => applyFullSaleReturn(
+      draft,
+      saleId,
+      details,
+      (product, quantity) => recordStockMovement(draft, product, quantity, "sale_return", saleId),
+    ));
+    setReturnSaving(false);
+    if (saved) {
+      setReturnDialog({ saleId: "", reason: "" });
+      showToast(bt("ফেরত ও স্টক সেভ হয়েছে", "Return and stock saved"));
+    }
   }
 
   async function downloadSaleInvoice(sale) {
     const total = Number(sale.total || 0);
     const paid = Math.min(Number(sale.paid || 0), total);
     const conditionSale = isConditionSale(sale);
+    const returnedSale = Boolean(sale.returnedAt);
     const conditionStatus = getConditionStatus(sale);
     const conditionOutstanding =
       conditionSale &&
       !["settled", "returned"].includes(conditionStatus)
         ? total
         : 0;
-    const due = conditionSale ? 0 : Math.max(0, total - paid);
+    const due = conditionSale || returnedSale ? 0 : Math.max(0, total - paid);
 
     const invoiceNumber = sale.orderNo || sale.id || `INV-${Date.now()}`;
     const business = data.shop || {};
     const items = Array.isArray(sale.items) ? sale.items : [];
-    const logoUrl = new URL("asianex-logo-original.png", window.location.href).href;
 
     const escapeHtml = (value) =>
       String(value ?? "").replace(/[&<>"']/g, (character) => {
@@ -1442,6 +1632,7 @@ export default function App() {
 
     const saleDate = sale.date
       ? new Date(sale.date).toLocaleString("en-GB", {
+          timeZone: "Asia/Dhaka",
           day: "2-digit",
           month: "short",
           year: "numeric",
@@ -1550,18 +1741,6 @@ export default function App() {
       >
         <!-- BUSINESS IDENTITY -->
         <div style="text-align:center;">
-          <img
-            alt="Asianex"
-            src="${logoUrl}"
-            style="
-              display:block;
-              width:210px;
-              height:87px;
-              object-fit:contain;
-              margin:0 auto;
-            "
-          />
-
           <div
             style="
               margin-top:10px;
@@ -1571,7 +1750,7 @@ export default function App() {
               font-weight:850;
             "
           >
-            ${escapeHtml(business.name || "Asianex")}
+            ${escapeHtml(business.name || "Shohoj ERP")}
           </div>
 
           <div
@@ -1788,7 +1967,9 @@ export default function App() {
               <div
                 style="
                   color:${
-                    conditionSale
+                    returnedSale
+                      ? "#b91c1c"
+                      : conditionSale
                       ? conditionStatus === "settled"
                         ? "#15803d"
                         : conditionStatus === "returned"
@@ -1802,7 +1983,9 @@ export default function App() {
                 "
               >
                 ${
-                  conditionSale
+                  returnedSale
+                    ? "Returned / Refunded"
+                    : conditionSale
                     ? escapeHtml(
                         conditionStatusLabel(
                           conditionStatus,
@@ -1814,6 +1997,7 @@ export default function App() {
                       : "Balance Due"
                 }
               </div>
+              ${returnedSale ? `<div style="color:#94a3b8;">Refunded</div><div style="color:#b91c1c;font-weight:800;">${escapeHtml(money(paid))}</div>` : ""}
             </div>
           </div>
         </div>
@@ -2050,7 +2234,7 @@ export default function App() {
               font-weight:800;
             "
           >
-            ${escapeHtml(business.name || "Asianex")}
+            ${escapeHtml(business.name || "Shohoj ERP")}
           </div>
         </div>
       </div>
@@ -2059,6 +2243,10 @@ export default function App() {
     document.body.appendChild(invoice);
 
     try {
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+        import("html2canvas"),
+        import("jspdf"),
+      ]);
       if (document.fonts?.ready) {
         await document.fonts.ready;
       }
@@ -2149,7 +2337,7 @@ export default function App() {
       const safeInvoiceNumber = String(invoiceNumber)
         .replace(/[^a-zA-Z0-9_-]/g, "-");
 
-      pdf.save(`Asianex-Invoice-${safeInvoiceNumber}.pdf`);
+      pdf.save(`Invoice-${safeInvoiceNumber}.pdf`);
 
       showToast(
         bt(
@@ -2171,16 +2359,16 @@ export default function App() {
     }
   }
 
-  function saveShop(event) {
+  async function saveShop(event) {
     event.preventDefault();
-    patchData((draft) => {
+    const saved = await patchData((draft) => {
       draft.shop = {
         name: shopForm.name.trim(),
         phone: shopForm.phone.trim(),
         address: shopForm.address.trim(),
       };
     });
-    showToast("দোকানের তথ্য সেভ হয়েছে");
+    if (saved) showToast("দোকানের তথ্য সেভ হয়েছে");
   }
 
   function backupData() {
@@ -2188,25 +2376,174 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `mollick-erp-backup-${todayKey()}.json`;
+    link.download = `shohoj-erp-backup-${todayKey()}.json`;
     link.click();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function restoreData(event) {
     const file = event.target.files?.[0];
     if (!file) return;
+    event.target.value = "";
+    if (file.size > 10 * 1024 * 1024) {
+      showToast(bt("ব্যাকআপ ফাইল ১০ MB-এর বেশি", "Backup exceeds 10 MB"));
+      return;
+    }
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
-        const restored = normalizeData(JSON.parse(reader.result));
-        setData(restored);
-        showToast("ব্যাকআপ ইমপোর্ট হয়েছে");
+        const restored = normalizeData(parseBackup(reader.result));
+        const confirmed = window.confirm(
+          bt(
+            `এই ব্যাকআপে ${restored.products.length}টি পণ্য এবং ${restored.sales.length}টি বিক্রয় আছে। বর্তমান ডেটা বদলে যাবে। আগে বর্তমান ডেটার ব্যাকআপ ডাউনলোড হবে। চালিয়ে যাবেন?`,
+            `This backup has ${restored.products.length} products and ${restored.sales.length} sales. It will replace current data. A backup of current data will download first. Continue?`,
+          ),
+        );
+        if (!confirmed) return;
+        if (isFirebaseReady() && (!authUser || cloudStatus !== "firebase")) {
+          throw new Error("Cloud unavailable");
+        }
+        backupData();
+        if (isFirebaseReady()) {
+          await replaceFirebaseData(authUser.uid, restored);
+        } else {
+          setData(restored);
+        }
+        showToast(bt("ব্যাকআপ ইমপোর্ট হয়েছে", "Backup imported"));
       } catch {
-        showToast("ব্যাকআপ ফাইল ঠিক নয়");
+        showToast(bt("ইমপোর্ট হয়নি; ফাইল বা সংযোগ যাচাই করুন", "Import failed; check file or connection"));
       }
     };
     reader.readAsText(file);
+  }
+
+  async function submitAuth(event) {
+    event.preventDefault();
+    if (authRegister && authPassword !== authConfirmPassword) {
+      setAuthError(bt("পাসওয়ার্ড দুটি এক নয়", "The passwords do not match"));
+      return;
+    }
+    setAuthBusy(true);
+    setAuthError("");
+    setAuthNotice("");
+    try {
+      if (authRegister) await register(authEmail.trim(), authPassword);
+      else await signIn(authEmail.trim(), authPassword);
+      setAuthPassword("");
+      setAuthConfirmPassword("");
+    } catch (error) {
+      const code = String(error?.code || "");
+      setAuthError(
+        code.includes("email-already-in-use")
+          ? bt("এই ইমেইলে অ্যাকাউন্ট আছে", "This email already has an account")
+          : code.includes("weak-password")
+            ? bt("অন্তত ৮ অক্ষরের পাসওয়ার্ড দিন", "Use at least 8 password characters")
+            : bt("ইমেইল, পাসওয়ার্ড বা Firebase সেটআপ যাচাই করুন", "Check email, password, or Firebase setup"),
+      );
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function sendResetLink() {
+    if (!authEmail.trim()) {
+      setAuthError(bt("আগে ইমেইল লিখুন", "Enter your email first"));
+      return;
+    }
+    setAuthBusy(true);
+    setAuthError("");
+    setAuthNotice("");
+    try {
+      await resetPassword(authEmail.trim());
+      setAuthNotice(bt("অ্যাকাউন্ট থাকলে ইমেইলে পাসওয়ার্ড পরিবর্তনের লিংক পাঠানো হয়েছে।", "If this account exists, a password reset link has been emailed."));
+    } catch {
+      setAuthError(bt("পাসওয়ার্ডের লিংক পাঠানো যায়নি; ইমেইল ও Firebase সেটআপ দেখুন।", "Could not send a reset link; check the email and Firebase setup."));
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  if ((!isFirebaseReady() && !localDemoEntered) || (isFirebaseReady() && (!authReady || !authUser))) {
+    const cloudLogin = isFirebaseReady();
+    return (
+      <main className="erp-auth-screen">
+        <div className="erp-auth-layout">
+          <aside className="erp-auth-brand">
+            <div className="erp-auth-brand-top">
+              <span className="erp-auth-logo" aria-hidden="true">S</span>
+              <span><strong>{bt("সহজ ERP", "Shohoj ERP")}</strong><small>{bt("সহজ ব্যবসা ব্যবস্থাপনা", "Simple business management")}</small></span>
+            </div>
+            <div className="erp-auth-brand-copy">
+              <span className="erp-auth-eyebrow">{bt("আপনার ব্যবসা, এক জায়গায়", "Your business, in one place")}</span>
+              <h2>{bt("প্রতিদিনের কাজ আরও সহজ করুন।", "Make every workday simpler.")}</h2>
+              <p>{bt("বিক্রয়, বাকি, স্টক ও রিপোর্ট—প্রয়োজনীয় সব হিসাব গুছিয়ে রাখুন।", "Keep sales, dues, stock and reports organized in one clear workspace.")}</p>
+            </div>
+            <span className="erp-auth-brand-foot">{bt("দ্রুত • পরিষ্কার • ব্যবহার সহজ", "Fast • Clear • Easy to use")}</span>
+          </aside>
+
+          <section className="erp-auth-panel">
+            <div className="erp-auth-toolbar">
+              <button type="button" onClick={() => setLang(lang === "bn" ? "en" : "bn")}>{lang === "bn" ? "English" : "বাংলা"}</button>
+            </div>
+            <div className="erp-auth-card">
+              <span className="erp-auth-kicker">{cloudLogin ? bt("নিরাপদ অ্যাকাউন্ট", "Secure account") : bt("লোকাল ডেমো", "Local demo")}</span>
+              <h1>{cloudLogin && !authReady ? bt("অপেক্ষা করুন", "Please wait") : cloudLogin && authRegister ? bt("অ্যাকাউন্ট তৈরি করুন", "Create your account") : bt("লগইন", "Sign in")}</h1>
+              <p className="erp-auth-intro">{cloudLogin ? bt("আপনার প্রতিষ্ঠানের কাজ শুরু করতে লগইন করুন।", "Sign in to continue to your business workspace.") : bt("ডেমোতে আপনার তথ্য এই ব্রাউজারেই থাকবে। অনলাইন লগইন চালু হলে ইমেইল দিয়ে প্রবেশ করতে পারবেন।", "Demo data stays in this browser. Email sign in will be available when the cloud connection is enabled.")}</p>
+
+              {cloudLogin && authReady && (
+                <>
+                  <form onSubmit={submitAuth}>
+                    <label>{bt("ইমেইল", "Email address")}
+                      <input type="email" autoComplete="email" placeholder="name@example.com" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} />
+                    </label>
+                    <label>{bt("পাসওয়ার্ড", "Password")}
+                      <span className="erp-auth-password-field">
+                        <input type={showAuthPassword ? "text" : "password"} autoComplete={authRegister ? "new-password" : "current-password"} minLength={authRegister ? 8 : 6} placeholder={bt("পাসওয়ার্ড লিখুন", "Enter your password")} required value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} />
+                        <button type="button" aria-label={showAuthPassword ? bt("পাসওয়ার্ড লুকান", "Hide password") : bt("পাসওয়ার্ড দেখান", "Show password")} onClick={() => setShowAuthPassword((shown) => !shown)}>{showAuthPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button>
+                      </span>
+                    </label>
+                    {authRegister && <label>{bt("পাসওয়ার্ড নিশ্চিত করুন", "Confirm password")}
+                      <input type={showAuthPassword ? "text" : "password"} autoComplete="new-password" minLength={8} required value={authConfirmPassword} onChange={(event) => setAuthConfirmPassword(event.target.value)} />
+                    </label>}
+                    {!authRegister && <button className="erp-auth-forgot" type="button" disabled={authBusy} onClick={sendResetLink}>{bt("পাসওয়ার্ড ভুলে গেছেন?", "Forgot password?")}</button>}
+                    {authError && <p className="erp-auth-error" role="alert">{authError}</p>}
+                    {authNotice && <p className="erp-auth-notice" role="status">{authNotice}</p>}
+                    <button className="primary-button erp-auth-submit" disabled={authBusy} type="submit">{authBusy ? bt("অপেক্ষা করুন…", "Please wait…") : authRegister ? bt("অ্যাকাউন্ট তৈরি করুন", "Create account") : bt("লগইন করুন", "Sign in")}</button>
+                  </form>
+                  <p className="erp-auth-alt">{authRegister ? bt("আগেই অ্যাকাউন্ট আছে?", "Already have an account?") : bt("নতুন ব্যবহারকারী?", "New here?")} <button type="button" onClick={() => { setAuthRegister(!authRegister); setAuthError(""); setAuthNotice(""); }}>{authRegister ? bt("লগইন করুন", "Sign in") : bt("অ্যাকাউন্ট তৈরি করুন", "Create account")}</button></p>
+                </>
+              )}
+
+              {!cloudLogin && (
+                <div className="erp-auth-demo">
+                  <div className="erp-auth-demo-fields" aria-disabled="true">
+                    <label>{bt("ইমেইল", "Email address")}<input type="email" placeholder="name@example.com" disabled /></label>
+                    <label>{bt("পাসওয়ার্ড", "Password")}<input type="password" placeholder={bt("পাসওয়ার্ড লিখুন", "Enter your password")} disabled /></label>
+                  </div>
+                  <div className="erp-auth-demo-note"><strong>{bt("ডেমো মোড", "Demo mode")}</strong><span>{bt("এখানে ইমেইল-পাসওয়ার্ড ছাড়াই অ্যাপটি দেখে নিতে পারবেন। এটি ব্যক্তিগত লগইন নয়।", "Explore the app without an email or password. This is not a private sign in.")}</span></div>
+                  <button className="primary-button erp-auth-submit" type="button" onClick={() => setLocalDemoEntered(true)}>{bt("ডেমোতে প্রবেশ করুন", "Enter demo")}</button>
+                </div>
+              )}
+            </div>
+            <p className="erp-auth-panel-foot">© {new Date().getFullYear()} {bt("সহজ ERP", "Shohoj ERP")}</p>
+          </section>
+        </div>
+      </main>
+    );
+  }
+
+  if (isFirebaseReady() && cloudStatus !== "firebase") {
+    return (
+      <main className="erp-auth-screen">
+        <section className="erp-auth-card">
+          <span className="erp-auth-kicker">{bt("সহজ ERP", "Shohoj ERP")}</span>
+          <h1>{cloudStatus === "error" ? bt("সংযোগ পাওয়া যাচ্ছে না", "Connection unavailable") : bt("ডেটা লোড হচ্ছে", "Loading data")}</h1>
+          <p>{bt("ডেটা সংযোগ ঠিক না হওয়া পর্যন্ত পরিবর্তন বন্ধ রাখা হয়েছে।", "Changes are paused until data connection is ready.")}</p>
+          {cloudStatus === "error" && <button className="primary-button" type="button" onClick={() => { setCloudStatus("connecting"); setSyncRetry((count) => count + 1); }}>{bt("আবার চেষ্টা করুন", "Retry")}</button>}
+          <button className="erp-auth-switch" type="button" onClick={() => signOutUser()}>{bt("লগআউট", "Sign out")}</button>
+        </section>
+      </main>
+    );
   }
 
   return (
@@ -2222,22 +2559,19 @@ export default function App() {
                 </linearGradient>
               </defs>
               <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#mollickBrandGradient)" />
-              <path
-                d="M16 45V19h7l9 12 9-12h7v26h-7V30l-9 11-9-11v15h-7Z"
-                fill="#ffffff"
-              />
+              <text x="32" y="44" textAnchor="middle" fontSize="38" fontWeight="800" fill="#ffffff">S</text>
               <rect x="18" y="49" width="28" height="4" rx="2" fill="#f4c342" />
             </svg>
           </span>
           <div className="brand-copy">
-            <strong>{lang === "bn" ? "মল্লিক ERP" : "Mollick ERP"}</strong>
-            <small className="brand-edition">{lang === "bn" ? "UK business edition" : "UK business edition"}</small>
+            <strong>{lang === "bn" ? "সহজ ERP" : "Shohoj ERP"}</strong>
+            <small className="brand-edition">{bt("সহজ ব্যবসা ব্যবস্থাপনা", "Simple business management")}</small>
             
           </div>
         </div>
 
         <nav className="nav-tabs" aria-label="প্রধান মেনু">
-          {tabs.map((tab) => {
+          {tabs.filter((tab) => primaryTabs.has(tab.id) || showMoreNav || activeTab === tab.id).map((tab) => {
             const Icon = tab.icon;
             return (
               <button
@@ -2251,6 +2585,10 @@ export default function App() {
               </button>
             );
           })}
+          <button className="nav-tab nav-more" aria-expanded={showMoreNav} onClick={() => setShowMoreNav((open) => !open)} type="button">
+            {showMoreNav ? <ChevronUp size={19} /> : <ChevronDown size={19} />}
+            {showMoreNav ? bt("কম দেখুন", "Show less") : bt("আরও মেনু", "More menus")}
+          </button>
         </nav>
 
 
@@ -2263,6 +2601,9 @@ export default function App() {
             <h1>{activeTab === "stock" ? t.stockTitle : activeTab === "staff" ? t.staffTitle : lang === "en" ? t[activeTab] : titles[activeTab]}</h1>
           </div>
           <div className="top-actions">
+            <span className="sync-status" role="status">{cloudLabel(cloudStatus, lang)}</span>
+            {isFirebaseReady() && <button className="ghost-button" type="button" onClick={() => signOutUser()}>{bt("লগআউট", "Sign out")}</button>}
+            {!isFirebaseReady() && <button className="ghost-button" type="button" onClick={() => setLocalDemoEntered(false)}>{bt("ডেমো থেকে বের হন", "Exit demo")}</button>}
             <button className="language-toggle" onClick={() => setLang(lang === "bn" ? "en" : "bn")} type="button">
               {t.languageButton}
             </button>
@@ -2282,6 +2623,17 @@ export default function App() {
           <section className="view">
             <MetricGrid metrics={metrics} lang={lang} />
 
+            {!products.length && (
+              <section className="panel setup-panel">
+                <h2>{bt("শুরু করুন", "Get started")}</h2>
+                <p>{bt("প্রথমে প্রতিষ্ঠানের তথ্য দিন, তারপর পণ্য বা সেবা যোগ করুন।", "Add your business details, then add a product or service.")}</p>
+                <div className="setup-actions">
+                  <button className="ghost-button" type="button" onClick={() => setActiveTab("settings")}>{bt("প্রতিষ্ঠানের তথ্য", "Business details")}</button>
+                  <button className="primary-button" type="button" onClick={() => { setActiveTab("products"); window.setTimeout(openNewProductModal, 0); }}>{bt("পণ্য/সেবা যোগ", "Add product/service")}</button>
+                </div>
+              </section>
+            )}
+
             <section className="panel current-staff-panel">
               <div className="current-staff-copy">
                 <span className="current-staff-kicker">
@@ -2289,17 +2641,16 @@ export default function App() {
                 </span>
                 <strong>
                   {currentStaff?.name ||
-                    bt("কোনো Active স্টাফ নেই", "No active staff")}
+                    bt("স্টাফ ছাড়াই শুরু করা যাবে", "You can start without staff")}
                 </strong>
                 <small>
-                  {bt(
-                    "এখনকার বিক্রয় ও নতুন পণ্য এই স্টাফের নামে রেকর্ড হবে।",
-                    "Sales and new products will be recorded under this staff.",
-                  )}
+                  {currentStaff
+                    ? bt("এখনকার বিক্রয় ও নতুন পণ্য এই স্টাফের নামে রেকর্ড হবে।", "Sales and new products will be recorded under this staff.")
+                    : bt("স্টাফ যোগ করা ঐচ্ছিক। যোগ করলে বিক্রির সঙ্গে তার নাম থাকবে।", "Staff is optional. Add someone to record their name on sales.")}
                 </small>
               </div>
 
-              <label className="current-staff-selector">
+              {activeStaff.length ? <label className="current-staff-selector">
                 <span>{bt("স্টাফ নির্বাচন", "Select staff")}</span>
                 <select
                   disabled={!activeStaff.length}
@@ -2325,19 +2676,23 @@ export default function App() {
                     </option>
                   )}
                 </select>
-              </label>
+              </label> : <button className="ghost-button" type="button" onClick={() => { setShowMoreNav(true); setActiveTab("staff"); }}>{bt("স্টাফ যোগ করুন", "Add staff")}</button>}
             </section>
 
             <div className="dashboard-grid">
               <section className="panel">
                 <div className="panel-head">
                   <h2>{bt("দ্রুত বিক্রয়", "Quick sale")}</h2>
-                  <button className="primary-button" onClick={() => { resetSaleDraft(); setActiveTab("sale"); }} type="button">
+                  <button className="primary-button" onClick={() => {
+                    if (saleProducts.length) { resetSaleDraft(); setActiveTab("sale"); }
+                    else { setActiveTab("products"); window.setTimeout(openNewProductModal, 0); }
+                  }} type="button">
                     <Plus size={18} />
-                    {bt("নতুন বিক্রয়", "New sale")}
+                    {saleProducts.length ? bt("নতুন বিক্রয়", "New sale") : bt("পণ্য/সেবা যোগ", "Add product/service")}
                   </button>
                 </div>
                 <div className="quick-products">
+                  {!saleProducts.length && <p className="quick-empty">{bt("পণ্য বা সেবা যোগ করলে এখান থেকে এক ক্লিকে বিক্রয় শুরু করতে পারবেন।", "Add a product or service to start a sale here in one click.")}</p>}
                   {saleProducts.slice(0, 8).map((product) => (
                     <button
                       className="quick-card"
@@ -2355,7 +2710,7 @@ export default function App() {
                       type="button"
                     >
                       <strong>{product.name}</strong>
-                      <span>{money(product.sellPrice)} · স্টক {product.stock}</span>
+                      <span>{money(product.sellPrice)} · {product.kind === "service" ? bt("সেবা", "Service") : `${bt("স্টক", "Stock")} ${product.stock}`}</span>
                     </button>
                   ))}
                 </div>
@@ -2388,7 +2743,7 @@ export default function App() {
               </section>
             </div>
 
-            <SalesTable title={bt("সর্বশেষ বিক্রয়", "Recent orders")} sales={recentSales} lang={lang} />
+            <SalesTable title={bt("সর্বশেষ বিক্রয়", "Recent orders")} sales={recentSales} lang={lang} onInvoice={downloadSaleInvoice} />
           </section>
         )}
 
@@ -2430,7 +2785,7 @@ export default function App() {
                     {saleProducts.length ? (
                       saleProducts.map((product) => (
                         <option key={product.id} value={product.id}>
-                          {product.name} · {bt("স্টক", "Stock")} {product.stock}
+                          {product.name} · {product.kind === "service" ? bt("সেবা", "Service") : `${bt("স্টক", "Stock")} ${product.stock}`}
                         </option>
                       ))
                     ) : (
@@ -2730,7 +3085,7 @@ export default function App() {
                             "কুরিয়ার টাকা সংগ্রহ করবে",
                             "Courier will collect payment",
                           )
-                        : String(saleCartTotal || 0)
+                        : saleForm.payment === "Due" ? "0" : String(saleCartTotal || 0)
                     }
                     step="1"
                     type="number"
@@ -2749,7 +3104,7 @@ export default function App() {
                         ...saleForm,
                         payment,
                         paid:
-                          payment === "Courier Condition"
+                          payment === "Courier Condition" || payment === "Due"
                             ? ""
                             : saleForm.paid,
                       });
@@ -2860,11 +3215,11 @@ export default function App() {
 
                 <button
                   className="primary-button wide multi-sale-save-button"
-                  disabled={!saleItems.length}
+                  disabled={!saleItems.length || saleSaving}
                   type="submit"
                 >
                   <Save size={18} />
-                  {bt("বিক্রয় সেভ করুন", "Save sale")}
+                  {saleSaving ? bt("সেভ হচ্ছে…", "Saving…") : bt("বিক্রয় সেভ করুন", "Save sale")}
                 </button>
               </form>
             </section>
@@ -3090,6 +3445,7 @@ export default function App() {
                               {new Date(sale.date).toLocaleString(
                                 lang === "bn" ? "bn-BD" : "en-GB",
                                 {
+                                  timeZone: "Asia/Dhaka",
                                   dateStyle: "short",
                                   timeStyle: "short",
                                 },
@@ -3303,6 +3659,7 @@ export default function App() {
                     <option value="all">{bt("সব বিক্রয়", "All sales")}</option>
                     <option value="paid">{bt("পরিশোধিত", "Paid")}</option>
                     <option value="due">{bt("বাকি আছে", "Due")}</option>
+                    <option value="returned">{bt("ফেরত", "Returned")}</option>
                     <option value="condition">
                       {bt("কুরিয়ার কন্ডিশন", "Courier COD")}
                     </option>
@@ -3333,7 +3690,7 @@ export default function App() {
                       <th>{bt("পরিশোধ", "Paid")}</th>
                       <th>{bt("বাকি", "Due")}</th>
                       <th className="invoice-column-heading">
-                        {bt("ইনভয়েস", "Invoice")}
+                        {bt("কাজ", "Actions")}
                       </th>
                     </tr>
                   </thead>
@@ -3360,6 +3717,7 @@ export default function App() {
                               {new Date(sale.date).toLocaleString(
                                 lang === "bn" ? "bn-BD" : "en-GB",
                                 {
+                                  timeZone: "Asia/Dhaka",
                                   dateStyle: "short",
                                   timeStyle: "short",
                                 },
@@ -3401,11 +3759,14 @@ export default function App() {
                                   )}
                                 </small>
                               )}
+                              {sale.returnedAt && <small>{bt("সম্পূর্ণ ফেরত", "Fully returned")}</small>}
                             </td>
                             <td className="all-sales-money">{money(total)}</td>
                             <td className="all-sales-money">{money(paid)}</td>
                             <td>
-                              {isConditionSale(sale) ? (
+                              {sale.returnedAt ? (
+                                <span className="all-sales-payment-badge">{bt("ফেরত", "Returned")}</span>
+                              ) : isConditionSale(sale) ? (
                                 <span
                                   className={`all-sales-payment-badge condition-inline-status is-${getConditionStatus(
                                     sale,
@@ -3432,6 +3793,7 @@ export default function App() {
                             </td>
 
                             <td className="invoice-column-cell">
+                              <div className="table-actions">
                               <button
                                 aria-label={bt(
                                   "PDF ইনভয়েস ডাউনলোড",
@@ -3461,6 +3823,8 @@ export default function App() {
                                   />
                                 </svg>
                               </button>
+                              {!isConditionSale(sale) && !sale.returnedAt && <button className="small-button" type="button" onClick={() => setReturnDialog({ saleId: sale.id, reason: "" })}>{bt("ফেরত", "Return")}</button>}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -3799,6 +4163,7 @@ export default function App() {
                       <tr key={product.id}>
                         <td className="product-primary-cell">
                           <strong>{product.name}</strong>
+                          {product.kind === "service" && <small>{bt("সেবা", "Service")}</small>}
                           <small>{product.id}</small>
                           {product.addedByStaffName && (
                             <small className="product-added-by">
@@ -3808,9 +4173,9 @@ export default function App() {
                         </td>
 
                         <td>{product.category || bt("ক্যাটাগরি নেই", "No category")}</td>
-                        <td>{money(product.buyPrice)}</td>
+                        <td>{product.kind === "service" ? "—" : money(product.buyPrice)}</td>
                         <td>{money(product.sellPrice)}</td>
-                        <td className="product-stock-cell">{product.stock}</td>
+                        <td className="product-stock-cell">{product.kind === "service" ? "—" : product.stock}</td>
 
                         <td>
                           <span
@@ -3898,6 +4263,13 @@ export default function App() {
                   <form className="product-editor-form" onSubmit={submitProduct}>
                     <div className="product-editor-fields">
                       <label>
+                        {bt("ধরন", "Type")}
+                        <select value={productForm.kind} onChange={(event) => setProductForm({ ...productForm, kind: event.target.value })}>
+                          <option value="product">{bt("পণ্য", "Product")}</option>
+                          <option value="service">{bt("সেবা", "Service")}</option>
+                        </select>
+                      </label>
+                      <label>
                         {bt("পণ্যের নাম", "Product Name")}
                         <input
                           autoFocus
@@ -3920,7 +4292,7 @@ export default function App() {
                         />
                       </label>
 
-                      <label>
+                      {productForm.kind !== "service" && <label>
                         {bt("ক্রয় মূল্য", "Buying Price")}
                         <input
                           min="0"
@@ -3931,7 +4303,7 @@ export default function App() {
                           type="number"
                           value={productForm.buyPrice}
                         />
-                      </label>
+                      </label>}
 
                       <label>
                         {bt("বিক্রয় মূল্য", "Selling Price")}
@@ -3947,7 +4319,7 @@ export default function App() {
                         />
                       </label>
 
-                      <label>
+                      {productForm.kind !== "service" && <label>
                         {bt("স্টক", "Stock")}
                         <input
                           min="0"
@@ -3959,9 +4331,9 @@ export default function App() {
                           type="number"
                           value={productForm.stock}
                         />
-                      </label>
+                      </label>}
 
-                      <label>
+                      {productForm.kind !== "service" && <label>
                         {bt("কম স্টক সীমা", "Low Stock Limit")}
                         <input
                           min="0"
@@ -3972,7 +4344,7 @@ export default function App() {
                           type="number"
                           value={productForm.lowStock}
                         />
-                      </label>
+                      </label>}
 
                       <label className="product-status-field">
                         <span>{bt("স্ট্যাটাস", "Status")}</span>
@@ -4030,6 +4402,62 @@ export default function App() {
           </section>
         )}
 
+        {activeTab === "purchases" && (
+          <section className="view purchase-view">
+            <section className="panel">
+              <div className="panel-head">
+                <div>
+                  <h2>{bt("পণ্য ক্রয়", "Record a purchase")}</h2>
+                  <p className="muted-line">{bt("ক্রয় সেভ করলে স্টক ও গড় ক্রয় মূল্য আপডেট হবে। লাভের হিসাবে এই ক্রয়মূল্য বিক্রয়ের সময় ধরা হয়।", "Saving a purchase updates stock and average buying cost. The cost is counted in profit when the item is sold.")}</p>
+                </div>
+              </div>
+              {products.some((product) => product.kind !== "service") ? (
+                <form className="form-grid purchase-form" onSubmit={submitPurchase}>
+                  <label>{bt("পণ্য", "Product")}
+                    <select required value={purchaseForm.productId} onChange={(event) => {
+                      const selected = products.find((product) => product.id === event.target.value);
+                      setPurchaseForm((current) => ({ ...current, productId: event.target.value, unitCost: selected ? String(wholeTaka(selected.buyPrice)) : "" }));
+                    }}>
+                      <option value="">{bt("পণ্য নির্বাচন করুন", "Select a product")}</option>
+                      {products.filter((product) => product.kind !== "service").map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+                    </select>
+                  </label>
+                  <label>{bt("সরবরাহকারী (ঐচ্ছিক)", "Supplier (optional)")}
+                    <input value={purchaseForm.supplier} onChange={(event) => setPurchaseForm((current) => ({ ...current, supplier: event.target.value }))} placeholder={bt("নাম লিখুন", "Enter a name")} />
+                  </label>
+                  <label>{bt("পরিমাণ", "Quantity")}
+                    <input type="number" min="1" step="1" required value={purchaseForm.qty} onChange={(event) => setPurchaseForm((current) => ({ ...current, qty: event.target.value }))} />
+                  </label>
+                  <label>{bt("প্রতি ইউনিট ক্রয় মূল্য", "Buying price per unit")}
+                    <input type="number" min="1" step="1" required value={purchaseForm.unitCost} onChange={(event) => setPurchaseForm((current) => ({ ...current, unitCost: event.target.value }))} />
+                  </label>
+                  <label className="form-span-2">{bt("নোট (ঐচ্ছিক)", "Note (optional)")}
+                    <input value={purchaseForm.note} onChange={(event) => setPurchaseForm((current) => ({ ...current, note: event.target.value }))} />
+                  </label>
+                  <div className="purchase-form-footer form-span-2">
+                    <strong>{bt("মোট", "Total")}: {money(Math.max(0, wholeTaka(purchaseForm.qty)) * Math.max(0, wholeTaka(purchaseForm.unitCost)))}</strong>
+                    <button className="primary-button" type="submit" disabled={purchaseSaving}>{purchaseSaving ? bt("সেভ হচ্ছে…", "Saving…") : bt("ক্রয় সেভ করুন", "Save purchase")}</button>
+                  </div>
+                </form>
+              ) : (
+                <div className="setup-actions"><p>{bt("ক্রয়ের আগে একটি পণ্য যোগ করুন।", "Add a product before recording a purchase.")}</p><button className="primary-button" type="button" onClick={() => { setActiveTab("products"); window.setTimeout(openNewProductModal, 0); }}>{bt("পণ্য যোগ করুন", "Add product")}</button></div>
+              )}
+            </section>
+            <section className="panel">
+              <div className="panel-head"><h2>{bt("ক্রয়ের ইতিহাস", "Purchase history")}</h2><strong>{bt("এই মাসে", "This month")}: {money(data.purchases.filter((purchase) => getMonthKey(purchase.date) === monthKey()).reduce((sum, purchase) => sum + Number(purchase.total || 0), 0))}</strong></div>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>{bt("তারিখ", "Date")}</th><th>{bt("পণ্য", "Product")}</th><th>{bt("সরবরাহকারী", "Supplier")}</th><th>{bt("পরিমাণ", "Quantity")}</th><th>{bt("দর", "Unit cost")}</th><th>{bt("মোট", "Total")}</th></tr></thead>
+                  <tbody>
+                    {[...data.purchases].reverse().map((purchase) => <tr key={purchase.id}><td>{new Date(purchase.date).toLocaleString(lang === "bn" ? "bn-BD" : "en-GB", { timeZone: "Asia/Dhaka", dateStyle: "short", timeStyle: "short" })}</td><td>{purchase.productName}</td><td>{purchase.supplier || "—"}</td><td>{purchase.qty}</td><td>{money(purchase.unitCost)}</td><td>{money(purchase.total)}</td></tr>)}
+                    {!data.purchases.length && <tr><td colSpan="6">{bt("এখনও কোনো ক্রয় নেই।", "No purchases yet.")}</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </section>
+        )}
+
         {activeTab === "stock" && (
           <section className="view">
             <section className="panel">
@@ -4037,7 +4465,7 @@ export default function App() {
                 <div>
                   <h2>{t.stockTitle}</h2>
                   <strong className="muted-line">
-                    {filteredStock.length} {t.stockSubtitle} / {products.length} {bt("মোট", "total")}
+                    {filteredStock.length} {t.stockSubtitle} / {products.filter((item) => item.kind !== "service").length} {bt("মোট", "total")}
                   </strong>
                 </div>
                 <div className="toolbar">
@@ -4080,6 +4508,24 @@ export default function App() {
                   </article>
                 ))}
               </div>
+              <h3 className="history-heading">{bt("সাম্প্রতিক স্টক পরিবর্তন", "Recent stock changes")}</h3>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>{bt("সময়", "Time")}</th><th>{bt("পণ্য", "Product")}</th><th>{bt("পরিবর্তন", "Change")}</th><th>{bt("কারণ", "Reason")}</th><th>{bt("স্টাফ", "Staff")}</th></tr></thead>
+                  <tbody>
+                    {data.stockMovements.slice(-15).reverse().map((movement) => (
+                      <tr key={movement.id}>
+                        <td>{new Date(movement.date).toLocaleString(lang === "bn" ? "bn-BD" : "en-GB", { timeZone: "Asia/Dhaka", dateStyle: "short", timeStyle: "short" })}</td>
+                        <td>{movement.productName}</td>
+                        <td>{movement.delta > 0 ? "+" : ""}{movement.delta}</td>
+                        <td>{stockReasonLabel(movement.reason, lang)}</td>
+                        <td>{movement.staffName || "—"}</td>
+                      </tr>
+                    ))}
+                    {!data.stockMovements.length && <tr><td colSpan="5">{bt("এখনও পরিবর্তন নেই", "No changes yet")}</td></tr>}
+                  </tbody>
+                </table>
+              </div>
             </section>
           </section>
         )}
@@ -4106,7 +4552,7 @@ export default function App() {
                     {dueSales.length ? (
                       dueSales.map((sale) => (
                         <tr key={sale.id}>
-                          <td>{new Date(sale.date).toLocaleDateString(lang === "bn" ? "bn-BD" : "en-US")}</td>
+                          <td>{new Date(sale.date).toLocaleDateString(lang === "bn" ? "bn-BD" : "en-US", { timeZone: "Asia/Dhaka" })}</td>
                           <td>{sale.customer || bt("নাম নেই", "No name")}</td>
                           <td>{money(sale.total)}</td>
                           <td>{money(sale.total - sale.paid)}</td>
@@ -4122,6 +4568,23 @@ export default function App() {
                         <td colSpan="5">{bt("কোনো বাকি নেই।", "No due found.")}</td>
                       </tr>
                     )}
+                  </tbody>
+                </table>
+              </div>
+              <h3 className="history-heading">{bt("সাম্প্রতিক বাকি আদায়", "Recent due payments")}</h3>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>{bt("সময়", "Time")}</th><th>{bt("অর্ডার", "Order")}</th><th>{bt("টাকা", "Amount")}</th><th>{bt("স্টাফ", "Staff")}</th></tr></thead>
+                  <tbody>
+                    {data.duePayments.slice(-15).reverse().map((payment) => (
+                      <tr key={payment.id}>
+                        <td>{new Date(payment.date).toLocaleString(lang === "bn" ? "bn-BD" : "en-GB", { timeZone: "Asia/Dhaka", dateStyle: "short", timeStyle: "short" })}</td>
+                        <td>{sales.find((sale) => sale.id === payment.saleId)?.orderNo || payment.saleId}</td>
+                        <td>{money(payment.amount)}</td>
+                        <td>{payment.staffName || "—"}</td>
+                      </tr>
+                    ))}
+                    {!data.duePayments.length && <tr><td colSpan="4">{bt("এখনও আদায় নেই", "No payments yet")}</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -4149,7 +4612,7 @@ export default function App() {
                     {bt("খরচের ধরন", "Expense type")}
                     <input
                       onChange={(event) => setExpenseForm({ ...expenseForm, type: event.target.value })}
-                      placeholder={bt("ভাড়া / বেতন / বাজার", "Rent / Salary / Purchase")}
+                      placeholder={bt("ভাড়া / বেতন / বিদ্যুৎ", "Rent / Salary / Utilities")}
                       required
                       value={expenseForm.type}
                     />
@@ -4188,7 +4651,17 @@ export default function App() {
                   <option value="all">{bt("সব", "All")}</option>
                 </select>
               </div>
-              <SalesTable sales={reportSales} lang={lang} />
+              <SalesTable sales={reportSales} lang={lang} onInvoice={downloadSaleInvoice} />
+            </section>
+            <section className="panel">
+              <div className="panel-head"><h2>{bt("ফেরতের হিসাব", "Returns")}</h2><strong>{money(reportReturns.reduce((sum, item) => sum + Number(item.total || 0), 0))}</strong></div>
+              <div className="table-wrap"><table>
+                <thead><tr><th>{bt("তারিখ", "Date")}</th><th>{bt("অর্ডার", "Order")}</th><th>{bt("কাস্টমার", "Customer")}</th><th>{bt("ফেরতের কারণ", "Reason")}</th><th>{bt("বিক্রয় ফেরত", "Sale reversed")}</th><th>{bt("টাকা ফেরত", "Refunded")}</th></tr></thead>
+                <tbody>
+                  {reportReturns.map((item) => <tr key={item.id}><td>{new Date(item.date).toLocaleString(lang === "bn" ? "bn-BD" : "en-GB", { timeZone: "Asia/Dhaka", dateStyle: "short", timeStyle: "short" })}</td><td>{item.orderNo || item.saleId}</td><td>{item.customer || "—"}</td><td>{item.reason}</td><td>{money(item.total)}</td><td>{money(item.refundAmount)}</td></tr>)}
+                  {!reportReturns.length && <tr><td colSpan="6">{bt("ফেরত নেই।", "No returns.")}</td></tr>}
+                </tbody>
+              </table></div>
             </section>
           </section>
         )}
@@ -4329,12 +4802,12 @@ export default function App() {
             <div className="premium-delete-copy">
               <span>{bt("নিশ্চিত করুন", "Confirm delete")}</span>
               <h3 id="product-delete-title">
-                {bt("পণ্যটি ডিলিট করবেন?", "Delete this product?")}
+                {bt("পণ্যটি সরাবেন?", "Remove this product?")}
               </h3>
               <p>
                 {bt(
-                  `আপনি কি “${productDeleteConfirm.productName}” ডিলিট করতে নিশ্চিত?`,
-                  `Are you sure you want to delete “${productDeleteConfirm.productName}”? `,
+                  `“${productDeleteConfirm.productName}” সরাবেন? আগের বিক্রয় বা ক্রয়ের ইতিহাস থাকলে পণ্যটি নিষ্ক্রিয় হবে।`,
+                  `Remove “${productDeleteConfirm.productName}”? Products with sales or purchase history will be deactivated.`,
                 )}
               </p>
             </div>
@@ -4354,7 +4827,7 @@ export default function App() {
                 type="button"
               >
                 <Trash2 size={17} />
-                {bt("হ্যাঁ, ডিলিট করুন", "Yes, delete")}
+                {bt("হ্যাঁ, সরান", "Yes, remove")}
               </button>
             </div>
           </section>
@@ -4426,6 +4899,55 @@ export default function App() {
         </div>
       )}
 
+      {dueDialog.saleId && (
+        <div className="premium-delete-backdrop" onMouseDown={() => !dueSaving && setDueDialog({ saleId: "", amount: "" })} role="presentation">
+          <section className="premium-delete-modal due-entry-modal" aria-labelledby="due-entry-title" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+            <button className="premium-delete-close" type="button" aria-label={bt("বন্ধ করুন", "Close")} disabled={dueSaving} onClick={() => setDueDialog({ saleId: "", amount: "" })}>×</button>
+            <form onSubmit={submitDuePayment}>
+              <div className="premium-delete-copy">
+                <span>{bt("বাকি আদায়", "Collect payment")}</span>
+                <h3 id="due-entry-title">{bt("বাকি পরিশোধ", "Record due payment")}</h3>
+                <p>{bt("অবশিষ্ট বাকি", "Remaining due")}: <strong>{money(dueDialogRemaining)}</strong></p>
+                <label className="due-entry-field">{bt("আদায়ের পরিমাণ", "Amount received")}
+                  <input autoFocus type="number" inputMode="numeric" min="1" max={dueDialogRemaining} required value={dueDialog.amount} onChange={(event) => setDueDialog((current) => ({ ...current, amount: event.target.value }))} />
+                </label>
+              </div>
+              <div className="premium-delete-actions">
+                <button className="premium-delete-cancel" type="button" disabled={dueSaving} onClick={() => setDueDialog({ saleId: "", amount: "" })}>{bt("বাতিল", "Cancel")}</button>
+                <button className="primary-button" type="submit" disabled={dueSaving}>{dueSaving ? bt("সেভ হচ্ছে…", "Saving…") : bt("পরিশোধ সেভ করুন", "Save payment")}</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {returnDialog.saleId && returnDialogSale && (
+        <div className="premium-delete-backdrop" onMouseDown={() => !returnSaving && setReturnDialog({ saleId: "", reason: "" })} role="presentation">
+          <section className="premium-delete-modal return-entry-modal" aria-labelledby="return-entry-title" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+            <button className="premium-delete-close" type="button" aria-label={bt("বন্ধ করুন", "Close")} disabled={returnSaving} onClick={() => setReturnDialog({ saleId: "", reason: "" })}>×</button>
+            <form onSubmit={submitSaleReturn}>
+              <div className="premium-delete-copy">
+                <span>{bt("বিক্রয় ফেরত", "Sale return")}</span>
+                <h3 id="return-entry-title">{bt("সম্পূর্ণ বিল ফেরত দিন", "Return the full sale")}</h3>
+                <p>{returnDialogSale.orderNo || returnDialogSale.id} · {bt("বিক্রয়", "Sale")} {money(returnDialogSale.total)}</p>
+                <div className="return-entry-summary">
+                  <span>{bt("ফেরতযোগ্য টাকা", "Refund to customer")}: <strong>{money(returnDialogSale.paid)}</strong></span>
+                  <span>{bt("বাতিল হবে এমন বাকি", "Due to cancel")}: <strong>{money(Math.max(0, Number(returnDialogSale.total || 0) - Number(returnDialogSale.paid || 0)))}</strong></span>
+                </div>
+                <label className="due-entry-field">{bt("ফেরতের কারণ", "Reason for return")}
+                  <textarea required rows="3" maxLength="300" value={returnDialog.reason} onChange={(event) => setReturnDialog((current) => ({ ...current, reason: event.target.value }))} placeholder={bt("কারণ লিখুন", "Enter a reason")} />
+                </label>
+                <p className="return-entry-help">{bt("নিশ্চিত করলে পণ্যের স্টক ফিরবে এবং ফেরতের হিসাব সংরক্ষিত হবে।", "Confirm after refunding the customer. Stock and return history will be updated.")}</p>
+              </div>
+              <div className="premium-delete-actions">
+                <button className="premium-delete-cancel" type="button" disabled={returnSaving} onClick={() => setReturnDialog({ saleId: "", reason: "" })}>{bt("বাতিল", "Cancel")}</button>
+                <button className="primary-button" type="submit" disabled={returnSaving}>{returnSaving ? bt("সেভ হচ্ছে…", "Saving…") : bt("ফেরত নিশ্চিত করুন", "Confirm return")}</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
       <div className={`toast ${toast ? "is-visible" : ""}`} role="status" aria-live="polite">
         {toast}
       </div>
@@ -4467,7 +4989,7 @@ function ReceiptLine({ label, value }) {
   );
 }
 
-function SalesTable({ title, sales, lang = "bn" }) {
+function SalesTable({ title, sales, lang = "bn", onInvoice }) {
   const bn = lang === "bn";
   return (
     <section className={title ? "panel" : undefined}>
@@ -4495,14 +5017,16 @@ function SalesTable({ title, sales, lang = "bn" }) {
             {sales.length ? (
               sales.map((sale) => (
                 <tr key={sale.id}>
-                  <td>{new Date(sale.date).toLocaleString(bn ? "bn-BD" : "en-US", { dateStyle: "short", timeStyle: "short" })}</td>
+                  <td>{new Date(sale.date).toLocaleString(bn ? "bn-BD" : "en-US", { timeZone: "Asia/Dhaka", dateStyle: "short", timeStyle: "short" })}</td>
                   <td>{sale.items.map((item) => item.name).join(", ")}</td>
                   <td>{sale.customer || (bn ? "নগদ" : "Cash")}</td>
                   <td>{sale.staffName || "—"}</td>
                   <td>{money(sale.total)}</td>
                   <td>{money(saleProfit(sale))}</td>
                   <td>
-                    {isConditionSale(sale) &&
+                    {sale.returnedAt
+                      ? (bn ? "ফেরত" : "Returned")
+                      : isConditionSale(sale) &&
                     getConditionStatus(sale) !== "settled"
                       ? conditionStatusLabel(
                           getConditionStatus(sale),
@@ -4516,6 +5040,7 @@ function SalesTable({ title, sales, lang = "bn" }) {
                           ),
                         )}
                   </td>
+                  <td><button className="small-button" type="button" onClick={() => onInvoice(sale)}>{bn ? "ইনভয়েস" : "Invoice"}</button></td>
                 </tr>
               ))
             ) : (
@@ -4530,15 +5055,17 @@ function SalesTable({ title, sales, lang = "bn" }) {
   );
 }
 
-function cloudLabel(status) {
-  if (status === "firebase") return "Firebase sync চালু";
-  if (status === "connecting") return "Firebase connect হচ্ছে";
-  return "";
+function cloudLabel(status, lang) {
+  const bn = lang === "bn";
+  if (status === "firebase") return bn ? "ক্লাউডে সংরক্ষিত" : "Cloud connected";
+  if (status === "setup-error") return bn ? "Firebase সেটআপ অসম্পূর্ণ" : "Firebase setup incomplete";
+  return bn ? "লোকাল ডেমো" : "Local demo";
 }
 
 const emptyProductForm = {
   id: "",
   name: "",
+  kind: "product",
   category: "",
   buyPrice: "",
   sellPrice: "",

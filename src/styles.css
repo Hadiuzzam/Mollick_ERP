@@ -2165,6 +2165,26 @@ textarea:focus {
   line-height: 1.65;
 }
 
+.due-entry-field {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+  color: #082c52;
+  font-weight: 700;
+}
+
+.due-entry-field input {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 12px;
+  font-size: 1.08rem;
+}
+
+.due-entry-field textarea { width: 100%; padding: 11px 12px; resize: vertical; }
+.return-entry-summary { display: grid; gap: 7px; margin-top: 17px; padding: 13px 15px; border: 1px solid #dce8f0; border-radius: 8px; background: #f7fafc; color: #536b7c; font-size: 0.86rem; }
+.return-entry-summary strong { color: #082c52; }
+.premium-delete-copy .return-entry-help { margin-top: 14px; font-size: 0.82rem; }
+
 .premium-delete-actions {
   display: flex;
   justify-content: flex-end;
@@ -3567,5 +3587,145 @@ textarea:focus {
   .condition-toolbar-actions {
     grid-template-columns: 1fr;
   }
+}
+
+.erp-auth-screen {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: clamp(16px, 4vw, 44px);
+  background: radial-gradient(circle at 85% 10%, #e2edf6, transparent 35%), #f2f6fa;
+}
+
+.erp-auth-layout {
+  width: min(100%, 1040px);
+  min-height: min(680px, calc(100dvh - 88px));
+  display: grid;
+  grid-template-columns: 0.9fr 1.1fr;
+  overflow: hidden;
+  border: 1px solid #d8e3ec;
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 30px 80px rgba(5, 31, 58, 0.12);
+}
+
+.erp-auth-brand {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 36px;
+  overflow: hidden;
+  padding: clamp(28px, 4vw, 48px);
+  background: linear-gradient(155deg, #092744, #0b3760 65%, #17689b);
+  color: #fff;
+}
+
+.erp-auth-brand::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  right: -130px;
+  bottom: -175px;
+  width: 440px;
+  height: 440px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 50%;
+  box-shadow: 0 0 0 70px rgba(255, 255, 255, 0.035), 0 0 0 145px rgba(255, 255, 255, 0.025);
+}
+
+.erp-auth-brand-top { display: flex; align-items: center; gap: 13px; }
+.erp-auth-logo {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 12px;
+  background: linear-gradient(150deg, #1b70a7, #074575);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.18);
+  font-size: 1.8rem;
+  font-weight: 850;
+  line-height: 1;
+  text-decoration: underline;
+  text-decoration-color: #e9be48;
+  text-underline-offset: 4px;
+}
+.erp-auth-brand-top strong { display: block; font-size: 1.06rem; }
+.erp-auth-brand-top small { display: block; margin-top: 2px; color: #c7dbea; font-size: 0.76rem; }
+.erp-auth-eyebrow { color: #9fd2ed; font-size: 0.76rem; font-weight: 800; letter-spacing: 0.06em; }
+.erp-auth-brand-copy h2 { max-width: 390px; margin: 17px 0; color: #fff !important; font-size: clamp(2rem, 3vw, 2.8rem); line-height: 1.2; }
+.erp-auth-brand-copy p { max-width: 370px; margin: 0; color: #d6e4ef; font-size: 0.96rem; line-height: 1.75; }
+.erp-auth-brand-foot { color: #a9c8dc; font-size: 0.8rem; }
+
+.erp-auth-panel { display: flex; flex-direction: column; min-width: 0; padding: 26px clamp(24px, 5vw, 64px); }
+.erp-auth-toolbar { display: flex; justify-content: flex-end; }
+.erp-auth-toolbar button {
+  padding: 8px 12px;
+  border: 1px solid #d6e3ed;
+  border-radius: 8px;
+  background: #fff;
+  color: #12395b;
+  font-weight: 750;
+  cursor: pointer;
+}
+.erp-auth-card { width: min(100%, 420px); min-width: 0; margin: auto; padding: 30px 0; }
+.erp-auth-kicker { color: #17689b; font-size: 0.76rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+.erp-auth-card h1 { margin: 13px 0 10px; color: #082c52; font-size: clamp(1.8rem, 3vw, 2.2rem); line-height: 1.25; }
+.erp-auth-card .erp-auth-intro { margin: 0; color: #63798d; font-size: 0.94rem; line-height: 1.7; }
+.erp-auth-card form { display: grid; gap: 17px; margin-top: 28px; }
+.erp-auth-card label { display: grid; gap: 8px; color: #183a59; font-size: 0.86rem; font-weight: 750; }
+.erp-auth-card input { width: 100%; min-height: 48px; padding: 0 14px; font-size: 0.95rem; }
+.erp-auth-password-field { position: relative; display: block; }
+.erp-auth-password-field input { padding-right: 48px; }
+.erp-auth-password-field button { position: absolute; top: 50%; right: 8px; display: grid; place-items: center; width: 36px; height: 36px; transform: translateY(-50%); border: 0; border-radius: 7px; background: transparent; color: #5d7488; cursor: pointer; }
+.erp-auth-password-field button:hover { background: #edf4f8; color: #082c52; }
+.erp-auth-forgot { justify-self: end; margin-top: -8px; padding: 0; border: 0; background: transparent; color: #17689b; font-size: 0.84rem; font-weight: 750; cursor: pointer; }
+.erp-auth-card .erp-auth-error, .erp-auth-card .erp-auth-notice { margin: 0; padding: 10px 12px; border-radius: 7px; font-size: 0.84rem; line-height: 1.5; }
+.erp-auth-card .erp-auth-error { background: #fff2f0; color: #b42318; }
+.erp-auth-card .erp-auth-notice { background: #ecf8f1; color: #176540; }
+.erp-auth-submit { width: 100%; min-height: 48px; margin-top: 4px; font-size: 0.95rem; cursor: pointer; }
+.erp-auth-submit:disabled { opacity: 0.65; cursor: wait; }
+.erp-auth-alt { margin: 24px 0 0; color: #63798d; text-align: center; font-size: 0.88rem; }
+.erp-auth-alt button { padding: 0; border: 0; background: transparent; color: #17689b; font-weight: 800; cursor: pointer; }
+.erp-auth-demo { margin-top: 28px; }
+.erp-auth-demo-fields { display: grid; gap: 17px; margin-bottom: 22px; }
+.erp-auth-demo-fields input:disabled { background: #f4f7f9 !important; color: #8da0af !important; cursor: not-allowed; }
+.erp-auth-demo-note { display: grid; gap: 5px; padding: 14px 16px; border: 1px solid #d8e7f1; border-radius: 9px; background: #f5f9fc; color: #587084; font-size: 0.85rem; line-height: 1.55; }
+.erp-auth-demo-note strong { color: #0a416c; }
+.erp-auth-demo .erp-auth-submit { margin-top: 20px; }
+.erp-auth-panel-foot { margin: 0; color: #9aabba; text-align: center; font-size: 0.76rem; }
+.erp-auth-switch { margin-top: 18px; padding: 0; border: 0; background: transparent; color: #17689b; font-weight: 700; }
+
+@media (max-width: 700px) {
+  .erp-auth-screen { padding: 0; background: #fff; }
+  .erp-auth-layout { min-height: 100dvh; grid-template-columns: minmax(0, 1fr); border: 0; border-radius: 0; box-shadow: none; }
+  .erp-auth-brand { gap: 0; padding: 22px 24px; }
+  .erp-auth-brand::after, .erp-auth-brand-copy, .erp-auth-brand-foot { display: none; }
+  .erp-auth-panel { min-height: calc(100dvh - 92px); padding: 16px 24px 24px; }
+  .erp-auth-card { margin: 20px auto auto; padding: 28px 0; }
+}
+.history-heading { margin: 24px 0 0; font-size: 1rem; }
+.purchase-form-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 4px; }
+.purchase-form-footer strong { color: #082c52; }
+.sync-status { color: #536b7c; font-size: 0.78rem; font-weight: 700; white-space: nowrap; }
+.setup-panel { margin-bottom: 18px; }
+.setup-panel p { margin: 8px 0 16px; color: #536b7c; }
+.setup-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.quick-empty { grid-column: 1 / -1; margin: 0; padding: 16px; border: 1px dashed #cbd9e4; border-radius: 8px; color: #536b7c; background: #f8fbfd; }
+.nav-tab.nav-more { border: 1px dashed rgba(255, 255, 255, 0.28); background: rgba(255, 255, 255, 0.04) !important; }
+
+@media (max-width: 640px) {
+  .sidebar { position: sticky; top: 0; }
+  .nav-tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 6px;
+    scrollbar-width: thin;
+  }
+  .nav-tab { flex: 0 0 auto; white-space: nowrap; }
 }
 

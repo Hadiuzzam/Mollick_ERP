@@ -1,50 +1,41 @@
 # সহজ ERP
 
-হোটেল, রেস্টুরেন্ট, সুপার শপ, মোবাইল শো-রুম এবং ছোট দোকানের জন্য React + Vite ভিত্তিক বাংলা ERP/POS ডেমো।
+React ও Vite ভিত্তিক বাংলা ERP/POS। পণ্য ও সেবা বিক্রি, পণ্য ক্রয়, সম্পূর্ণ বিক্রয় ফেরত, বাকি, স্টক, খরচ, কুরিয়ার অর্ডার, রিপোর্ট এবং JSON ব্যাকআপ রয়েছে।
 
-## চালানোর নিয়ম
+## লোকাল ডেমো
 
 ```bash
 npm install
 npm run dev
 ```
 
-তারপর ব্রাউজারে Vite যে লোকাল URL দেখাবে সেটি খুলুন।
+ডিফল্টে Firebase বন্ধ থাকে। শুরুতে লগইন পাতার ডেমো প্রবেশপথ দেখা যায়; এটি অ্যাকাউন্ট সুরক্ষা নয়। তথ্য শুধু এই ব্রাউজারের localStorage-এ থাকে; অন্য ডিভাইসে দেখা যাবে না। গুরুত্বপূর্ণ তথ্য থাকলে নিয়মিত JSON ব্যাকআপ ডাউনলোড করুন।
 
 ## Firebase চালু করা
 
-ডিফল্টভাবে অ্যাপ demo/local mode-এ চলে। Firebase ব্যবহার করতে:
+1. Firebase Console-এ নিজের প্রকল্প তৈরি করুন। Email/Password Authentication ও Realtime Database চালু করুন। এই কম্পিউটারের `.env.local`-এ বিদ্যমান প্রকল্পের সংযোগ চালু আছে; ফাইলটি Git-এ রাখা হয় না।
+2. Realtime Database-এর **বর্তমান Rules সংরক্ষণ করুন**। [`database.rules.shohoj.example.json`](database.rules.shohoj.example.json)-এর `organizations` অংশ বর্তমান Rules-এর সঙ্গে মিলিয়ে বসাতে হবে। পুরো উদাহরণ ফাইল দিয়ে আগের Rules বদলাবেন না; একই প্রকল্পে অন্য অ্যাপ থাকতে পারে। Root-এ সবার জন্য `.read` বা `.write` অনুমতি থাকলে নিচের নিয়ম আলাদা সুরক্ষা দিতে পারবে না। বর্তমান প্রকল্পে ERP-এর মালিকভিত্তিক নিয়ম প্রয়োগ করা হয়েছে এবং পুরোনো উন্মুক্ত `mollick_erp/main-store` পথ বন্ধ করা হয়েছে; হাসপাতাল ও স্কুলের শাখার নিয়ম অক্ষত আছে।
+3. `.env.example` কপি করে `.env` বানান। Firebase web app config ও Realtime Database URL বসিয়ে `VITE_FIREBASE_ENABLED=true` করুন। Web API key নিজে অ্যাক্সেস নিয়ন্ত্রণ করে না; Database Rules করে।
+4. `npm run dev` চালান। মালিকের অ্যাকাউন্ট তৈরি করে লগইন করুন। পাসওয়ার্ড ভুলে গেলে লগইন পাতা থেকে রিসেট ইমেইল পাঠানো যায়। প্রতিটি অ্যাকাউন্টের তথ্য `organizations/{uid}/main-store` পথে আলাদা থাকে।
 
-1. `.env.example` কপি করে `.env` বানান।
-2. `VITE_FIREBASE_ENABLED=true` করুন।
-3. Firebase project config বসান।
-4. Firestore Database enable করুন।
+বর্তমানে প্রতিটি অ্যাকাউন্ট একটি প্রতিষ্ঠানের owner হিসেবে কাজ করে। অ্যাপের “স্টাফ” নির্বাচন বিক্রির নাম সংরক্ষণ করে; এটি আলাদা স্টাফ লগইন বা permission নয়। একাধিক কর্মীর নিজস্ব লগইন দেওয়ার আগে membership ও role rules যোগ করতে হবে।
 
-ডেটা একটি document-এ সেভ হয়: collection `VITE_FIREBASE_COLLECTION`, document `main-store`।
+Firebase চালু থাকলে পরিবর্তন Realtime Database transaction দিয়ে সেভ হয়। নেটওয়ার্ক বা Rules ব্যর্থ হলে সেভ ব্যর্থতার বার্তা আসে। JSON import বর্তমান ডেটা বদলায়, তাই আগে স্বয়ংক্রিয়ভাবে বর্তমান তথ্যের ব্যাকআপ ডাউনলোড হয় এবং ব্যবহারকারীকে নিশ্চিত করতে হয়।
 
-## GitHub Pages
+পণ্য ক্রয় করলে স্টক ও গড় ক্রয়মূল্য বাড়ে। লাভের হিসাবে সেই ক্রয়মূল্য পণ্য বিক্রয়ের সময় ধরা হয়; একই ক্রয় আবার সাধারণ খরচ হিসেবে যোগ করলে হিসাব দুবার কমবে। সম্পূর্ণ বিক্রয় ফেরত দিলে আদায়কৃত টাকার ফেরত, বাতিল বাকি এবং স্টক ফেরার নথি থাকে। দৈনিক ও মাসিক বিক্রয়/লাভে ফেরত তারিখে বিপরীত হিসাব ধরা হয়।
 
-এই project GitHub Pages-ready।
+## যাচাই ও বিল্ড
 
 ```bash
+npm run test
 npm run build
 ```
 
-GitHub Actions workflow `.github/workflows/deploy.yml` দেওয়া আছে। repo Settings থেকে Pages source হিসেবে GitHub Actions select করলে `main` branch push করলেই deploy হবে।
+GitHub Pages-এ ম্যানুয়াল প্রকাশের জন্য `npm run deploy` আছে। Firebase চালু করা build-এ নিজস্ব `.env` কনফিগারেশন লাগে। এই repository-তে স্বয়ংক্রিয় GitHub Actions workflow নেই।
 
-ম্যানুয়াল deploy করতে চাইলে:
+## বর্তমান সীমা
 
-```bash
-npm run deploy
-```
-
-## ফিচার
-
-- পণ্য, category, ক্রয় মূল্য, বিক্রয় মূল্য, stock
-- দ্রুত বিক্রয়
-- daily sales, daily profit, monthly sales, monthly profit
-- due tracking ও due payment
-- expense tracking
-- low-stock alert
-- backup/export ও import
-- business preset: hotel, restaurant, supershop, mobile showroom
+- আংশিক বিক্রয় ফেরত, সরবরাহকারীর বাকি পরিশোধ এবং স্টাফের পৃথক লগইন এখনও নেই। প্রথম সংস্করণে মালিকের অ্যাকাউন্ট দিয়ে কাজ করতে হবে।
+- বড় ডেটায় প্রতিবার পুরো প্রতিষ্ঠানের তথ্য transaction-এ নেওয়ার বদলে বিক্রয়, ক্রয় ও স্টক পৃথক পথে ভাগ করা প্রয়োজন হবে।
+- স্টক পরিবর্তন ও বাকি আদায়ের নতুন ইতিহাস সংরক্ষিত হয়; আগের ডেমো তথ্যের ইতিহাস তৈরি করা হয় না।
+- রিপোর্টের দিন ও মাস বাংলাদেশ সময় (Asia/Dhaka) অনুযায়ী গণনা হয়।
