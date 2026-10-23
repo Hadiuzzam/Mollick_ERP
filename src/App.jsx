@@ -2445,6 +2445,18 @@ export default function App() {
     }
   }
 
+  function submitDemoAuth(event) {
+    event.preventDefault();
+    const username = authEmail.trim().toLowerCase();
+    if ((username !== "admin" && username !== "admin@demo.local") || authPassword !== "123456") {
+      setAuthError(bt("ডেমো ইউজারনেম বা পাসওয়ার্ড ভুল", "Incorrect demo username or password"));
+      return;
+    }
+    setAuthError("");
+    setAuthPassword("");
+    setLocalDemoEntered(true);
+  }
+
   async function sendResetLink() {
     if (!authEmail.trim()) {
       setAuthError(bt("আগে ইমেইল লিখুন", "Enter your email first"));
@@ -2488,7 +2500,7 @@ export default function App() {
             <div className="erp-auth-card">
               <span className="erp-auth-kicker">{cloudLogin ? bt("নিরাপদ অ্যাকাউন্ট", "Secure account") : bt("লোকাল ডেমো", "Local demo")}</span>
               <h1>{cloudLogin && !authReady ? bt("অপেক্ষা করুন", "Please wait") : cloudLogin && authRegister ? bt("অ্যাকাউন্ট তৈরি করুন", "Create your account") : bt("লগইন", "Sign in")}</h1>
-              <p className="erp-auth-intro">{cloudLogin ? bt("আপনার প্রতিষ্ঠানের কাজ শুরু করতে লগইন করুন।", "Sign in to continue to your business workspace.") : bt("ডেমোতে আপনার তথ্য এই ব্রাউজারেই থাকবে। অনলাইন লগইন চালু হলে ইমেইল দিয়ে প্রবেশ করতে পারবেন।", "Demo data stays in this browser. Email sign in will be available when the cloud connection is enabled.")}</p>
+              <p className="erp-auth-intro">{cloudLogin ? bt("আপনার প্রতিষ্ঠানের কাজ শুরু করতে লগইন করুন।", "Sign in to continue to your business workspace.") : bt("নির্দিষ্ট ডেমো তথ্য দিয়ে প্রবেশ করুন। এখানে করা কাজ শুধু এই ব্রাউজারেই থাকবে।", "Use the fixed demo credentials. Your work here stays in this browser.")}</p>
 
               {cloudLogin && authReady && (
                 <>
@@ -2511,18 +2523,26 @@ export default function App() {
                     <button className="primary-button erp-auth-submit" disabled={authBusy} type="submit">{authBusy ? bt("অপেক্ষা করুন…", "Please wait…") : authRegister ? bt("অ্যাকাউন্ট তৈরি করুন", "Create account") : bt("লগইন করুন", "Sign in")}</button>
                   </form>
                   <p className="erp-auth-alt">{authRegister ? bt("আগেই অ্যাকাউন্ট আছে?", "Already have an account?") : bt("নতুন ব্যবহারকারী?", "New here?")} <button type="button" onClick={() => { setAuthRegister(!authRegister); setAuthError(""); setAuthNotice(""); }}>{authRegister ? bt("লগইন করুন", "Sign in") : bt("অ্যাকাউন্ট তৈরি করুন", "Create account")}</button></p>
+                  <p className="erp-auth-alt">{bt("নির্দিষ্ট ডেমো লগইন ব্যবহার করবেন?", "Want to use the fixed demo login?")} <a href="?demo=1">{bt("ডেমো খুলুন", "Open demo")}</a></p>
                 </>
               )}
 
               {!cloudLogin && (
-                <div className="erp-auth-demo">
-                  <div className="erp-auth-demo-fields" aria-disabled="true">
-                    <label>{bt("ইমেইল", "Email address")}<input type="email" placeholder="name@example.com" disabled /></label>
-                    <label>{bt("পাসওয়ার্ড", "Password")}<input type="password" placeholder={bt("পাসওয়ার্ড লিখুন", "Enter your password")} disabled /></label>
-                  </div>
-                  <div className="erp-auth-demo-note"><strong>{bt("ডেমো মোড", "Demo mode")}</strong><span>{bt("এখানে ইমেইল-পাসওয়ার্ড ছাড়াই অ্যাপটি দেখে নিতে পারবেন। এটি ব্যক্তিগত লগইন নয়।", "Explore the app without an email or password. This is not a private sign in.")}</span></div>
-                  <button className="primary-button erp-auth-submit" type="button" onClick={() => setLocalDemoEntered(true)}>{bt("ডেমোতে প্রবেশ করুন", "Enter demo")}</button>
-                </div>
+                <form className="erp-auth-demo" onSubmit={submitDemoAuth}>
+                  <label>{bt("ডেমো ইউজারনেম বা ইমেইল", "Demo username or email")}
+                    <input type="text" autoComplete="username" placeholder="Admin" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} />
+                  </label>
+                  <label>{bt("পাসওয়ার্ড", "Password")}
+                    <span className="erp-auth-password-field">
+                      <input type={showAuthPassword ? "text" : "password"} autoComplete="current-password" placeholder={bt("পাসওয়ার্ড লিখুন", "Enter your password")} required value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} />
+                      <button type="button" aria-label={showAuthPassword ? bt("পাসওয়ার্ড লুকান", "Hide password") : bt("পাসওয়ার্ড দেখান", "Show password")} onClick={() => setShowAuthPassword((shown) => !shown)}>{showAuthPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button>
+                    </span>
+                  </label>
+                  <div className="erp-auth-demo-note"><strong>{bt("ডেমো মোড", "Demo mode")}</strong><span>{bt("ডেমোর তথ্য শুধু এই ব্রাউজারে থাকবে; এটি অনলাইন ব্যক্তিগত অ্যাকাউন্ট নয়।", "Demo data stays in this browser; this is not a private online account.")}</span></div>
+                  {authError && <p className="erp-auth-error" role="alert">{authError}</p>}
+                  <button className="primary-button erp-auth-submit" type="submit">{bt("ডেমোতে প্রবেশ করুন", "Enter demo")}</button>
+                  {window.location.search.includes("demo=1") && <p className="erp-auth-alt"><a href={window.location.pathname}>{bt("অনলাইন লগইনে ফিরুন", "Back to online sign in")}</a></p>}
+                </form>
               )}
             </div>
             <p className="erp-auth-panel-foot">© {new Date().getFullYear()} {bt("সহজ ERP", "Shohoj ERP")}</p>

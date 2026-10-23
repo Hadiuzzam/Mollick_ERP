@@ -18,7 +18,9 @@ const firebaseConfig = {
 };
 
 const requested = import.meta.env.VITE_FIREBASE_ENABLED === "true";
-const enabled = requested &&
+// The fixed demo login runs entirely in this browser and never uses shared Firebase data.
+const demoMode = new URLSearchParams(window.location.search).get("demo") === "1";
+const enabled = !demoMode && requested &&
   Object.values(firebaseConfig).every(Boolean);
 
 function getFirebaseApp() {
@@ -35,7 +37,7 @@ export function isFirebaseReady() {
 }
 
 export function getStoreMode() {
-  return enabled ? "connecting" : requested ? "setup-error" : "local";
+  return enabled ? "connecting" : demoMode || !requested ? "local" : "setup-error";
 }
 
 export function subscribeAuth(callback, onError) {

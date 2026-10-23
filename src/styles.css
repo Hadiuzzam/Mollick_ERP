@@ -3690,6 +3690,8 @@ textarea:focus {
 .erp-auth-submit:disabled { opacity: 0.65; cursor: wait; }
 .erp-auth-alt { margin: 24px 0 0; color: #63798d; text-align: center; font-size: 0.88rem; }
 .erp-auth-alt button { padding: 0; border: 0; background: transparent; color: #17689b; font-weight: 800; cursor: pointer; }
+.erp-auth-alt a { color: #17689b; font-weight: 800; text-decoration: none; }
+.erp-auth-alt a:hover { text-decoration: underline; }
 .erp-auth-demo { margin-top: 28px; }
 .erp-auth-demo-fields { display: grid; gap: 17px; margin-bottom: 22px; }
 .erp-auth-demo-fields input:disabled { background: #f4f7f9 !important; color: #8da0af !important; cursor: not-allowed; }
